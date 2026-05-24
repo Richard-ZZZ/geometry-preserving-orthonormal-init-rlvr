@@ -66,4 +66,12 @@ The launch scripts in `scripts/` use public defaults or environment-variable ove
 
 ## Checkpoints
 
-Large checkpoints should be released outside git, e.g. Hugging Face Hub or Git LFS. Keep this repository lightweight and point to uploaded artifacts from `checkpoints/README.md`.
+Large checkpoints are released outside git on Hugging Face Hub. The public artifact repository is:
+
+- https://huggingface.co/RuijiaZ/geometry-preserving-orthonormal-init-rlvr-artifacts
+
+Cosine-decay LoRA adapter checkpoints for LoRA, RLMO, and RLPO are available under:
+
+- https://huggingface.co/RuijiaZ/geometry-preserving-orthonormal-init-rlvr-artifacts/tree/main/checkpoints
+
+See `checkpoints/README.md` for the checkpoint layout and download commands.
