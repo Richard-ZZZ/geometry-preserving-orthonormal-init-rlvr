@@ -2,6 +2,15 @@
 
 Filtered to LoRA, PiSSA, MiLoRA, RLPO, and RLMO checkpoint projects. Local cluster paths have been removed; replace placeholders with public artifact URLs before release.
 
+## Public Artifact Repository
+
+Released cosine-run LoRA adapter checkpoints are available at:
+
+https://huggingface.co/RuijiaZ/geometry-preserving-orthonormal-init-rlvr-artifacts
+
+Uploaded methods: LoRA, RLPO, and RLMO. For each method, seeds 41, 42, and 43 include steps 50, 100, 150, 200, 250, 300, 350, 400, 450, and 500 under `checkpoints/<METHOD>/seed<SEED>/global_step_<STEP>/`.
+
+
 | project | run | steps | last steps | checkpoint root |
 |---|---|---:|---|---|
 | `LoRA-Baseline-Paper-Replication` | `lora_1p5b_paper_seed41_r16_a32_lr1e5` | 21 | `global_step_850, global_step_900, global_step_950, global_step_1000, global_step_1024` | `HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed41_r16_a32_lr1e5` |
