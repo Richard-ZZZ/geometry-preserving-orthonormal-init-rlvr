@@ -1,0 +1,21 @@
+# Runtime outputs
+outputs/
+logs/
+ray_results/
+wandb/
+
+# Large artifacts: release these via Hugging Face Hub / Git LFS instead.
+checkpoints/*
+!checkpoints/README.md
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.parquet
+
+# Python/cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+

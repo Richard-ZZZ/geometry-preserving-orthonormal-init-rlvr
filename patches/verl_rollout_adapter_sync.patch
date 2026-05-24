@@ -1,0 +1,1831 @@
+diff --git a/verl/trainer/main_ppo.py b/verl/trainer/main_ppo.py
+index f738c981..971e9034 100644
+--- a/verl/trainer/main_ppo.py
++++ b/verl/trainer/main_ppo.py
+@@ -27,9 +27,10 @@ from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
+ from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+ from verl.trainer.ppo.reward import load_reward_manager
+ from verl.trainer.ppo.utils import need_critic, need_reference_policy
+-from verl.utils.config import validate_config
++from verl.utils.config import omega_conf_to_dataclass, validate_config
+ from verl.utils.device import is_cuda_available
+ from verl.utils.import_utils import load_extern_object
++from verl.workers.config import HFModelConfig
+ 
+ 
+ @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
+@@ -274,7 +275,6 @@ class TaskRunner:
+ 
+         from omegaconf import OmegaConf
+ 
+-        from verl.utils.fs import copy_to_local
+ 
+         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
+         pprint(OmegaConf.to_container(config, resolve=True))
+@@ -303,17 +303,11 @@ class TaskRunner:
+ 
+         # Download the checkpoint from HDFS to the local machine.
+         # `use_shm` determines whether to use shared memory, which could lead to faster model loading if turned on
+-        local_path = copy_to_local(
+-            config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False)
+-        )
+-
+-        # Instantiate the tokenizer and processor.
+-        from verl.utils import hf_processor, hf_tokenizer
++        model_config = omega_conf_to_dataclass(config.actor_rollout_ref.model, dataclass_type=HFModelConfig)
+ 
+-        trust_remote_code = config.data.get("trust_remote_code", False)
+-        tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+-        # Used for multimodal LLM, could be None
+-        processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)
++        # Keep dataset/reward-side prompt construction aligned with the worker/runtime resolution.
++        tokenizer = model_config.tokenizer
++        processor = model_config.processor
+ 
+         # Load the reward manager for training and validation.
+         reward_fn = load_reward_manager(
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index e439a76d..92061c88 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -61,6 +61,25 @@ from verl.utils.torch_functional import masked_mean
+ from verl.utils.tracking import ValidationGenerationsLogger
+ 
+ 
++def summarize_reward_components(reward_extra_infos_dict: dict[str, list]) -> dict[str, float]:
++    """Summarize numeric reward-side diagnostics into training metrics.
++
++    The DAPO reward manager can return raw score, accuracy, and optional
++    overlong-penalty details. Surfacing them here lets us distinguish
++    correctness drops from length penalties on the live training curve.
++    """
++    metrics = {}
++    for key, values in reward_extra_infos_dict.items():
++        arr = np.asarray(values)
++        if arr.size == 0:
++            continue
++        if arr.dtype == np.bool_:
++            arr = arr.astype(np.float32)
++        if np.issubdtype(arr.dtype, np.number):
++            metrics[f"reward_components/{key}_mean"] = float(arr.mean())
++    return metrics
++
++
+ @dataclass
+ class ResourcePoolManager:
+     """
+@@ -1165,7 +1184,15 @@ class RayPPOTrainer:
+ 
+                     assert "old_log_probs" in batch.batch, f'"old_log_prob" not in {batch.batch.keys()=}'
+ 
+-                    if self.use_reference_policy:
++                    # Only compute ref log-prob when it is actually consumed:
++                    # either as in-reward KL penalty or as a KL loss term.
++                    # For DAPO (use_kl_in_reward=False, use_kl_loss=False) this
++                    # avoids a wasted disable_adapter() forward every step.
++                    _need_ref_logprob = (
++                        self.config.algorithm.use_kl_in_reward
++                        or self.config.actor_rollout_ref.actor.get("use_kl_loss", False)
++                    )
++                    if self.use_reference_policy and _need_ref_logprob:
+                         # compute reference log_prob
+                         with marked_timer(str(Role.RefPolicy), timing_raw, color="olive"):
+                             if not self.ref_in_actor:
+@@ -1174,6 +1201,12 @@ class RayPPOTrainer:
+                                 ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
+                             batch = batch.union(ref_log_prob)
+ 
++                    # Compute base-model KL lazily inside actor update on actor workers.
++                    # This avoids a separate actor_rollout RPC before step 1, which is the
++                    # path that breaks for PiSSA/MiLoRA SVD-init adapters.
++
++                    batch.meta_info["log_base_model_kl"] = self.config.trainer.get("log_base_model_kl", False)
++
+                     # compute values
+                     if self.use_critic:
+                         with marked_timer("values", timing_raw, color="cyan"):
+@@ -1189,6 +1222,7 @@ class RayPPOTrainer:
+ 
+                         if reward_extra_infos_dict:
+                             batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
++                            metrics.update(summarize_reward_components(reward_extra_infos_dict))
+ 
+                         # compute rewards. apply_kl_penalty if available
+                         if self.config.algorithm.use_kl_in_reward:
+diff --git a/verl/utils/vllm/patch.py b/verl/utils/vllm/patch.py
+index 7a52a3c9..48734f24 100644
+--- a/verl/utils/vllm/patch.py
++++ b/verl/utils/vllm/patch.py
+@@ -67,6 +67,120 @@ except ImportError:
+     pass
+ 
+ 
++def patch_vllm_qwen2_packed_weight_loader():
++    try:
++        from vllm.model_executor.model_loader.weight_utils import default_weight_loader, maybe_remap_kv_scale_name
++        from vllm.model_executor.models.qwen2 import Qwen2Model, is_pp_missing_parameter
++    except ImportError:
++        return
++
++    if getattr(Qwen2Model.load_weights, "_verl_accepts_packed_weights", False):
++        return
++
++    def patched_load_weights(self, weights):
++        stacked_params_mapping = [
++            ("qkv_proj", "q_proj", "q"),
++            ("qkv_proj", "k_proj", "k"),
++            ("qkv_proj", "v_proj", "v"),
++            ("gate_up_proj", "gate_proj", 0),
++            ("gate_up_proj", "up_proj", 1),
++        ]
++        params_dict = dict(self.named_parameters(remove_duplicate=False))
++
++        def resolve_param_name(name: str) -> str:
++            candidates = [name, f"model.{name}"]
++            if name.endswith(".weight"):
++                candidates.extend(
++                    [
++                        name.replace(".weight", ".base_layer.weight"),
++                        f"model.{name.replace('.weight', '.base_layer.weight')}",
++                    ]
++                )
++            if name.endswith(".bias"):
++                candidates.extend(
++                    [
++                        name.replace(".bias", ".base_layer.bias"),
++                        f"model.{name.replace('.bias', '.base_layer.bias')}",
++                    ]
++                )
++            for candidate in candidates:
++                if candidate in params_dict:
++                    return candidate
++            suffix_matches = [
++                key
++                for key in params_dict
++                if any(key.endswith(f".{candidate}") or key == candidate for candidate in candidates)
++            ]
++            if len(suffix_matches) == 1:
++                return suffix_matches[0]
++            raise KeyError(name)
++
++        loaded_params = set()
++        for name, loaded_weight in weights:
++            if "rotary_emb.inv_freq" in name:
++                continue
++            if self.quant_config is not None and (scale_name := self.quant_config.get_cache_scale(name)):
++                param = params_dict[resolve_param_name(scale_name)]
++                weight_loader = getattr(param, "weight_loader", default_weight_loader)
++                loaded_weight = loaded_weight if loaded_weight.dim() == 0 else loaded_weight[0]
++                weight_loader(param, loaded_weight)
++                loaded_params.add(scale_name)
++                continue
++
++            already_packed = ".qkv_proj." in name or ".gate_up_proj." in name
++            if not already_packed:
++                for param_name, weight_name, shard_id in stacked_params_mapping:
++                    if weight_name not in name:
++                        continue
++                    name = name.replace(weight_name, param_name)
++                    if name.endswith(".bias") and name not in params_dict:
++                        continue
++                    if is_pp_missing_parameter(name, self):
++                        continue
++                    if name.endswith("scale"):
++                        name = maybe_remap_kv_scale_name(name, params_dict)
++                        if name is None:
++                            continue
++                    resolved_name = resolve_param_name(name)
++                    param = params_dict[resolved_name]
++                    weight_loader = getattr(param, "weight_loader", default_weight_loader)
++                    if weight_loader == default_weight_loader:
++                        weight_loader(param, loaded_weight)
++                    else:
++                        weight_loader(param, loaded_weight, shard_id)
++                    break
++                else:
++                    if name.endswith(".bias") and name not in params_dict:
++                        continue
++                    name = maybe_remap_kv_scale_name(name, params_dict)
++                    if name is None:
++                        continue
++                    if is_pp_missing_parameter(name, self):
++                        continue
++                    resolved_name = resolve_param_name(name)
++                    param = params_dict[resolved_name]
++                    weight_loader = getattr(param, "weight_loader", default_weight_loader)
++                    weight_loader(param, loaded_weight)
++            else:
++                if name.endswith(".bias") and name not in params_dict:
++                    continue
++                if name.endswith("scale"):
++                    name = maybe_remap_kv_scale_name(name, params_dict)
++                    if name is None:
++                        continue
++                if is_pp_missing_parameter(name, self):
++                    continue
++                resolved_name = resolve_param_name(name)
++                param = params_dict[resolved_name]
++                weight_loader = getattr(param, "weight_loader", default_weight_loader)
++                weight_loader(param, loaded_weight)
++            loaded_params.add(name)
++        return loaded_params
++
++    patched_load_weights._verl_accepts_packed_weights = True
++    Qwen2Model.load_weights = patched_load_weights
++
++
+ def patch_vllm_moe_model_weight_loader(model):
+     # this is a work around to load the weight of vllm fused moe model
+     # it is from a bug from vllm 0.8.2
+diff --git a/verl/workers/actor/dp_actor.py b/verl/workers/actor/dp_actor.py
+index 7931b6ab..dbd262c1 100644
+--- a/verl/workers/actor/dp_actor.py
++++ b/verl/workers/actor/dp_actor.py
+@@ -17,6 +17,7 @@
+ Single Process Actor
+ """
+ 
++import json
+ import logging
+ import os
+ 
+@@ -30,7 +31,7 @@ from verl import DataProto
+ from verl.trainer.ppo.core_algos import agg_loss, get_policy_loss_fn, kl_penalty
+ from verl.utils.attention_utils import index_first_axis, pad_input, rearrange, unpad_input
+ from verl.utils.device import get_device_id, get_device_name
+-from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
++from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_, promote_grads_to_fp32
+ from verl.utils.profiler import GPUMemoryLogger
+ from verl.utils.py_functional import append_to_dict
+ from verl.utils.seqlen_balancing import prepare_dynamic_batch, restore_dynamic_batch
+@@ -46,6 +47,101 @@ logger = logging.getLogger(__file__)
+ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+ 
+ 
++def _debug_base_kl_payload(old_log_prob: torch.Tensor, base_ref_log_prob: torch.Tensor, response_mask: torch.Tensor) -> dict:
++    diff = torch.clamp(old_log_prob - base_ref_log_prob, min=-20.0, max=20.0)
++    seq_den = response_mask.sum(dim=-1).clamp_min(1)
++    seq_base_kl = (-diff * response_mask).sum(dim=-1) / seq_den
++    return {
++        "old_mean": float(old_log_prob.mean().item()),
++        "base_ref_mean": float(base_ref_log_prob.mean().item()),
++        "diff_mean": float(diff.mean().item()),
++        "diff_abs_mean": float(diff.abs().mean().item()),
++        "masked_base_kl": float(verl_F.masked_mean(-diff, response_mask).item()),
++        "response_mask_sum": float(response_mask.sum().item()),
++        "seq_base_kl_head": seq_base_kl[:8].detach().cpu().tolist(),
++    }
++
++
++def _write_base_kl_debug(stage: str, payload: dict) -> str:
++    out_dir = os.getenv(
++        "VERL_BASE_KL_DEBUG_DIR",
++        "./outputs/base_kl_debug",
++    )
++    os.makedirs(out_dir, exist_ok=True)
++    exp_name = str(payload.get("experiment_name", "unknown_exp"))
++    path = os.path.join(out_dir, f"{exp_name}.{stage}.rank{payload.get('rank', 'x')}.json")
++    with open(path, "w", encoding="utf-8") as f:
++        json.dump(payload, f, ensure_ascii=True, sort_keys=True, indent=2)
++    return path
++
++
++def _write_actor_policy_debug(stage: str, payload: dict) -> str:
++    out_dir = os.getenv(
++        "VERL_ACTOR_POLICY_DEBUG_DIR",
++        "./outputs/actor_policy_debug",
++    )
++    os.makedirs(out_dir, exist_ok=True)
++    exp_name = str(payload.get("experiment_name", "unknown_exp"))
++    path = os.path.join(out_dir, f"{exp_name}.{stage}.rank{payload.get('rank', 'x')}.json")
++    with open(path, "w", encoding="utf-8") as f:
++        json.dump(payload, f, ensure_ascii=True, sort_keys=True, indent=2)
++    return path
++
++
++def _actor_adapter_state_payload(peft_model, extra: dict | None = None) -> dict:
++    active_adapters = []
++    if peft_model is not None:
++        active_adapters_attr = getattr(peft_model, "active_adapters", [])
++        if callable(active_adapters_attr):
++            try:
++                active_adapters_attr = active_adapters_attr()
++            except (TypeError, ValueError):
++                active_adapters_attr = []
++        if active_adapters_attr is None:
++            active_adapters = []
++        elif isinstance(active_adapters_attr, str):
++            active_adapters = [active_adapters_attr]
++        else:
++            try:
++                active_adapters = list(active_adapters_attr)
++            except TypeError:
++                active_adapters = []
++
++    payload = {
++        "has_peft_config": hasattr(peft_model, "peft_config"),
++        "active_adapters": active_adapters,
++        "disable_adapter_layers": bool(getattr(getattr(peft_model, "base_model", None), "_disable_adapter", False)),
++    }
++    if extra:
++        payload.update(extra)
++    return payload
++
++
++def _base_ref_probe_payload(stage: str, tensor: torch.Tensor, old_log_prob: torch.Tensor | None = None) -> dict:
++    flat = tensor.reshape(-1)
++    payload = {
++        "stage": stage,
++        "shape": list(tensor.shape),
++        "dtype": str(tensor.dtype),
++        "device": str(tensor.device),
++        "mean": float(tensor.mean().item()),
++        "abs_mean": float(tensor.abs().mean().item()),
++        "min": float(tensor.min().item()),
++        "max": float(tensor.max().item()),
++        "head": flat[:8].detach().cpu().tolist(),
++    }
++    if old_log_prob is not None:
++        diff = old_log_prob - tensor
++        payload.update(
++            {
++                "old_mean": float(old_log_prob.mean().item()),
++                "diff_mean": float(diff.mean().item()),
++                "diff_abs_mean": float(diff.abs().mean().item()),
++            }
++        )
++    return payload
++
++
+ class DataParallelPPOActor(BasePPOActor):
+     """FSDP DataParallel PPO Actor or Ref worker
+ 
+@@ -60,6 +156,7 @@ class DataParallelPPOActor(BasePPOActor):
+         super().__init__(config)
+         self.actor_module = actor_module
+         self.actor_optimizer = actor_optimizer
++        self._grad_dump_done = False
+         role = "Ref" if actor_optimizer is None else "Actor"
+ 
+         self.use_remove_padding = self.config.get("use_remove_padding", False)
+@@ -91,6 +188,10 @@ class DataParallelPPOActor(BasePPOActor):
+         else:
+             self.scaler = None
+ 
++        self._adalora_step = 0
++        self._debug_base_kl_once = False
++        self._debug_base_ref_flow_once = False
++
+     def _forward_micro_batch(
+         self, micro_batch, temperature, calculate_entropy=False
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+@@ -311,6 +412,10 @@ class DataParallelPPOActor(BasePPOActor):
+         if self.scaler is not None:
+             self.scaler.unscale_(self.actor_optimizer)
+         if isinstance(self.actor_module, FSDP):
++            params = list(self.actor_module.parameters())
++            params, grad_dtypes = promote_grads_to_fp32(params)
++            if len(grad_dtypes) > 1 and torch.distributed.get_rank() == 0:
++                print(f"Promoting mixed actor grad dtypes to fp32 before clipping: {sorted(map(str, grad_dtypes))}")
+             grad_norm = self.actor_module.clip_grad_norm_(max_norm=self.config.grad_clip)
+         elif isinstance(self.actor_module, FSDPModule):
+             grad_norm = fsdp2_clip_grad_norm_(self.actor_module.parameters(), max_norm=self.config.grad_clip)
+@@ -330,10 +435,33 @@ class DataParallelPPOActor(BasePPOActor):
+                 self.actor_optimizer.zero_grad()
+             else:
+                 self.actor_optimizer.step()
++
++        peft_model = getattr(self.actor_module, "_fsdp_wrapped_module", self.actor_module)
++        peft_config = getattr(getattr(peft_model, "peft_config", {}), "get", lambda *_: None)("default")
++        if peft_config is not None and str(getattr(peft_config, "peft_type", "")).endswith("ADALORA"):
++            init_r = getattr(peft_config, "init_r", None)
++            target_r = getattr(peft_config, "target_r", None)
++            should_allocate = init_r is None or target_r is None or target_r < init_r
++            if should_allocate:
++                missing_grad_count = 0
++                for name, param in peft_model.named_parameters():
++                    if "lora_" in name and ".default" in name and param.grad is None:
++                        # AdaLoRA rank allocation reads gradients even after optimizer.step().
++                        param.grad = torch.zeros_like(param)
++                        missing_grad_count += 1
++                if missing_grad_count and torch.distributed.get_rank() == 0:
++                    print(f"Filled {missing_grad_count} missing AdaLoRA grads with zeros before rank allocation.")
++                peft_model.base_model.update_and_allocate(self._adalora_step)
++                self._adalora_step += 1
++            elif self._adalora_step == 0 and torch.distributed.get_rank() == 0:
++                print("Skipping AdaLoRA rank allocation because target_r >= init_r; rank schedule is a no-op.")
++                self._adalora_step += 1
+         return grad_norm
+ 
+     @GPUMemoryLogger(role="dp actor", logger=logger)
+     def compute_log_prob(self, data: DataProto, calculate_entropy=False) -> torch.Tensor:
++        if not hasattr(self, "_debug_actor_compute_log_prob_once"):
++            self._debug_actor_compute_log_prob_once = False
+         """Compute the log probability of the responses given input_ids, attention_mask and position_ids
+ 
+         Args:
+@@ -353,6 +481,16 @@ class DataParallelPPOActor(BasePPOActor):
+         """
+         # set to eval
+         self.actor_module.eval()
++        if not self._debug_actor_compute_log_prob_once and torch.distributed.get_rank() == 0:
++            _write_actor_policy_debug(
++                "actor_compute_log_prob",
++                {
++                    "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                    "rank": int(torch.distributed.get_rank()),
++                    **_actor_adapter_state_payload(self.actor_module),
++                },
++            )
++            self._debug_actor_compute_log_prob_once = True
+ 
+         micro_batch_size = data.meta_info["micro_batch_size"]
+         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
+@@ -394,10 +532,51 @@ class DataParallelPPOActor(BasePPOActor):
+ 
+         return log_probs, entropys
+ 
++    def _maybe_dump_full_grads(self) -> None:
++        dump_path = os.getenv("VERL_FULL_GRAD_DUMP_PATH")
++        if not dump_path or self._grad_dump_done or not isinstance(self.actor_module, FSDP):
++            return
++
++        requested = os.getenv("VERL_FULL_GRAD_LAYERS", "").strip()
++        selected = {name.strip() for name in requested.split(",") if name.strip()}
++        grad_tensors = {}
++
++        with FSDP.summon_full_params(self.actor_module, writeback=False, with_grads=True):
++            for name, param in self.actor_module.named_parameters():
++                if not name.endswith(".weight"):
++                    continue
++                if selected and name not in selected:
++                    continue
++                if param.grad is None:
++                    continue
++                grad_tensors[name] = param.grad.detach().cpu().float().clone()
++
++        if torch.distributed.get_rank() == 0:
++            parent = os.path.dirname(dump_path)
++            if parent:
++                os.makedirs(parent, exist_ok=True)
++            torch.save(grad_tensors, dump_path)
++            print(f"Saved {len(grad_tensors)} full gradients to {dump_path}")
++
++        torch.distributed.barrier()
++        self._grad_dump_done = True
++
+     @GPUMemoryLogger(role="dp actor", logger=logger)
+     def update_policy(self, data: DataProto):
+         # make sure we are in training mode
+         self.actor_module.train()
++        if not hasattr(self, "_debug_actor_update_policy_once"):
++            self._debug_actor_update_policy_once = False
++        if not self._debug_actor_update_policy_once and torch.distributed.get_rank() == 0:
++            _write_actor_policy_debug(
++                "actor_update_policy",
++                {
++                    "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                    "rank": int(torch.distributed.get_rank()),
++                    **_actor_adapter_state_payload(self.actor_module),
++                },
++            )
++            self._debug_actor_update_policy_once = True
+ 
+         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
+ 
+@@ -412,6 +591,11 @@ class DataParallelPPOActor(BasePPOActor):
+         ]
+         if self.config.use_kl_loss:
+             select_keys.append("ref_log_prob")
++        safe_base_ref_log_prob = None
++        if "base_ref_log_prob" in data.batch.keys():
++            # TensorDict.select() corrupts this tensor in the current training path,
++            # so carry a materialized copy across the selection boundary.
++            safe_base_ref_log_prob = data.batch["base_ref_log_prob"].clone().contiguous()
+         # Include pre-computed IS weights if present in batch
+         # Weights are computed centrally in trainer and added to batch when algorithm.rollout_is=True
+         if "rollout_is_weights" in data.batch.keys():
+@@ -424,6 +608,25 @@ class DataParallelPPOActor(BasePPOActor):
+         non_tensor_select_keys = ["multi_modal_inputs"] if has_multi_modal_inputs else []
+ 
+         data = data.select(batch_keys=select_keys, non_tensor_batch_keys=non_tensor_select_keys)
++        if safe_base_ref_log_prob is not None:
++            data.batch["base_ref_log_prob"] = safe_base_ref_log_prob
++        if (
++            not self._debug_base_ref_flow_once
++            and torch.distributed.get_rank() == 0
++            and "base_ref_log_prob" in data.batch.keys()
++        ):
++            _write_base_kl_debug(
++                "actor_update_probe_after_select",
++                {
++                    "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                    "rank": int(torch.distributed.get_rank()),
++                    **_base_ref_probe_payload(
++                        "after_select",
++                        data.batch["base_ref_log_prob"],
++                        data.batch.get("old_log_probs"),
++                    ),
++                },
++            )
+ 
+         # Split to make minibatch iterator for updating the actor
+         # See PPO paper for details. https://arxiv.org/abs/1707.06347
+@@ -434,6 +637,24 @@ class DataParallelPPOActor(BasePPOActor):
+         metrics = {}
+         for _ in range(self.config.ppo_epochs):
+             for batch_idx, mini_batch in enumerate(mini_batches):
++                if (
++                    not self._debug_base_ref_flow_once
++                    and torch.distributed.get_rank() == 0
++                    and "base_ref_log_prob" in mini_batch.batch.keys()
++                ):
++                    _write_base_kl_debug(
++                        "actor_update_probe_mini_batch",
++                        {
++                            "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                            "rank": int(torch.distributed.get_rank()),
++                            "mini_batch_idx": int(batch_idx),
++                            **_base_ref_probe_payload(
++                                "mini_batch_before_dynamic",
++                                mini_batch.batch["base_ref_log_prob"],
++                                mini_batch.batch.get("old_log_probs"),
++                            ),
++                        },
++                    )
+                 if self.config.use_dynamic_bsz:
+                     max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
+                     micro_batches, _ = prepare_dynamic_batch(mini_batch, max_token_len=max_token_len)
+@@ -445,10 +666,49 @@ class DataParallelPPOActor(BasePPOActor):
+ 
+                 self.actor_optimizer.zero_grad()
+ 
+-                for micro_batch in micro_batches:
++                for micro_idx, micro_batch in enumerate(micro_batches):
++                    if (
++                        not self._debug_base_ref_flow_once
++                        and torch.distributed.get_rank() == 0
++                        and "base_ref_log_prob" in micro_batch.batch.keys()
++                    ):
++                        _write_base_kl_debug(
++                            "actor_update_probe_micro_before_to",
++                            {
++                                "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                                "rank": int(torch.distributed.get_rank()),
++                                "mini_batch_idx": int(batch_idx),
++                                "micro_batch_idx": int(micro_idx),
++                                **_base_ref_probe_payload(
++                                    "micro_batch_before_to",
++                                    micro_batch.batch["base_ref_log_prob"],
++                                    micro_batch.batch.get("old_log_probs"),
++                                ),
++                            },
++                        )
+                     micro_batch = micro_batch.to(get_device_id())
+                     micro_batch_metrics = {}
+                     model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
++                    if (
++                        not self._debug_base_ref_flow_once
++                        and torch.distributed.get_rank() == 0
++                        and "base_ref_log_prob" in model_inputs
++                    ):
++                        _write_base_kl_debug(
++                            "actor_update_probe_micro_after_to",
++                            {
++                                "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                                "rank": int(torch.distributed.get_rank()),
++                                "mini_batch_idx": int(batch_idx),
++                                "micro_batch_idx": int(micro_idx),
++                                **_base_ref_probe_payload(
++                                    "micro_batch_after_to",
++                                    model_inputs["base_ref_log_prob"],
++                                    model_inputs.get("old_log_probs"),
++                                ),
++                            },
++                        )
++                        self._debug_base_ref_flow_once = True
+                     response_mask = model_inputs["response_mask"]
+                     old_log_prob = model_inputs["old_log_probs"]
+                     advantages = model_inputs["advantages"]
+@@ -468,14 +728,16 @@ class DataParallelPPOActor(BasePPOActor):
+                         model_inputs, temperature=temperature, calculate_entropy=calculate_entropy
+                     )
+ 
++                    # Keep rollout/eval-mode log probs for diagnostics such as base-model KL.
++                    rollout_old_log_prob = model_inputs["old_log_probs"]
+                     # for fully_async_policy recipe
+                     if hasattr(self.config, "use_rollout_log_probs") and self.config.use_rollout_log_probs:
+-                        old_log_prob = model_inputs["old_log_probs"]
++                        old_log_prob = rollout_old_log_prob
+                     else:
+                         if on_policy:
+                             old_log_prob = log_prob.detach()
+                         else:
+-                            old_log_prob = model_inputs["old_log_probs"]
++                            old_log_prob = rollout_old_log_prob
+ 
+                     loss_mode = self.config.policy_loss.get("loss_mode", "vanilla")
+                     # vanilla -> verl.trainer.ppo.core_algos.compute_policy_loss_vanilla
+@@ -533,6 +795,37 @@ class DataParallelPPOActor(BasePPOActor):
+                         micro_batch_metrics["actor/kl_loss"] = kl_loss.detach().item() * loss_scale_factor
+                         micro_batch_metrics["actor/kl_coef"] = self.config.kl_loss_coef
+ 
++                    if "base_ref_log_prob" in model_inputs:
++                        base_ref_log_prob = model_inputs["base_ref_log_prob"]
++                        # Compare rollout/eval-mode policy log probs against the frozen reference.
++                        # This keeps base-model KL on the same inference-style footing as standard LoRA evals.
++                        negative_approx_base_kl = torch.clamp(
++                            rollout_old_log_prob - base_ref_log_prob, min=-20.0, max=20.0
++                        )
++                        base_model_kl = verl_F.masked_mean(-negative_approx_base_kl, response_mask)
++                        micro_batch_metrics["actor/base_model_kl"] = base_model_kl.detach().item()
++                        global_step = int(data.meta_info.get("global_steps", -1))
++                        if not self._debug_base_kl_once and torch.distributed.get_rank() == 0:
++                            self._debug_base_kl_once = True
++                            rollout_vs_current = rollout_old_log_prob - log_prob.detach()
++                            current_vs_base = log_prob.detach() - base_ref_log_prob
++                            debug_payload = {
++                                "stage": "actor_update",
++                                "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                                "global_step": global_step,
++                                "rank": int(torch.distributed.get_rank()),
++                                "mini_batch_idx": int(batch_idx),
++                                "micro_batch_idx": int(micro_idx),
++                                **_debug_base_kl_payload(rollout_old_log_prob, base_ref_log_prob, response_mask),
++                                "current_log_prob_mean": float(log_prob.detach().mean().item()),
++                                "rollout_vs_current_diff_mean": float(rollout_vs_current.mean().item()),
++                                "rollout_vs_current_diff_abs_mean": float(rollout_vs_current.abs().mean().item()),
++                                "current_vs_base_diff_mean": float(current_vs_base.mean().item()),
++                                "current_vs_base_diff_abs_mean": float(current_vs_base.abs().mean().item()),
++                            }
++                            debug_path = _write_base_kl_debug("actor_update", debug_payload)
++                            print(f"[DEBUG actor-update base KL] wrote {debug_path}")
++
+                     if self.config.use_dynamic_bsz:
+                         # relative to the dynamic bsz
+                         loss = policy_loss * loss_scale_factor
+@@ -546,6 +839,7 @@ class DataParallelPPOActor(BasePPOActor):
+                     micro_batch_metrics["actor/pg_loss"] = pg_loss.detach().item() * loss_scale_factor
+                     append_to_dict(metrics, micro_batch_metrics)
+ 
++                self._maybe_dump_full_grads()
+                 grad_norm = self._optimizer_step()
+                 mini_batch_metrics = {"actor/grad_norm": grad_norm.detach().item()}
+                 append_to_dict(metrics, mini_batch_metrics)
+diff --git a/verl/workers/config/model.py b/verl/workers/config/model.py
+index 59977de1..531e52d6 100644
+--- a/verl/workers/config/model.py
++++ b/verl/workers/config/model.py
+@@ -12,7 +12,9 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import json
+ from dataclasses import dataclass, field
++from pathlib import Path
+ from typing import Any, Optional
+ 
+ from omegaconf import MISSING
+@@ -27,6 +29,22 @@ from verl.utils.model import get_generation_config, update_model_config
+ __all__ = ["HFModelConfig"]
+ 
+ 
++def _resolve_svd_init_aux_path(path: str, lora_adapter_path: Optional[str]) -> Optional[str]:
++    if not lora_adapter_path:
++        return None
++    adapter_config_path = Path(lora_adapter_path) / "adapter_config.json"
++    if not adapter_config_path.exists():
++        return None
++    try:
++        payload = json.loads(adapter_config_path.read_text())
++    except Exception:
++        return None
++    base_model_name_or_path = payload.get("base_model_name_or_path")
++    if not base_model_name_or_path or base_model_name_or_path == path:
++        return None
++    return base_model_name_or_path
++
++
+ @dataclass
+ class HFModelConfig(BaseConfig):
+     # note that we separate model_path, model_config_path and tokenizer_path in case they are different
+@@ -78,6 +96,16 @@ class HFModelConfig(BaseConfig):
+     # fsdp lora related. We may setup a separate config later
+     lora_rank: int = 0
+     lora_alpha: int = 16
++    use_dora: bool = False
++    use_adalora: bool = False
++    adalora_target_r: Optional[int] = None
++    adalora_init_r: Optional[int] = None
++    adalora_tinit: int = 0
++    adalora_tfinal: int = 0
++    adalora_delta_t: int = 1
++    adalora_beta1: float = 0.85
++    adalora_beta2: float = 0.85
++    adalora_orth_reg_weight: float = 0.5
+     target_modules: Optional[str] = "all-linear"
+ 
+     exclude_modules: Optional[str] = None
+@@ -87,6 +115,13 @@ class HFModelConfig(BaseConfig):
+ 
+     # path to pre-trained LoRA adapter to load for continued training
+     lora_adapter_path: Optional[str] = None
++    lora_A_init_method: str = "default"
++    lora_A_wavelet: str = "haar"
++    # SVD-init adapters (PiSSA/MiLoRA/OLoRA) may modify base weights.
++    # When True, treat base as residual (W_res) and use saved init A/B for ref.
++    lora_residual_base: bool = False
++    # Optional: freeze LoRA basis (A) during training.
++    freeze_lora_A: bool = False
+     use_liger: bool = False
+ 
+     use_fused_kernels: bool = False
+@@ -97,10 +132,14 @@ class HFModelConfig(BaseConfig):
+     def __post_init__(self):
+         import_external_libs(self.external_lib)
+ 
++        svd_init_aux_path = None
++        if self.lora_residual_base:
++            svd_init_aux_path = _resolve_svd_init_aux_path(self.path, self.lora_adapter_path)
++
+         if self.hf_config_path is None:
+-            self.hf_config_path = self.path
++            self.hf_config_path = svd_init_aux_path or self.path
+         if self.tokenizer_path is None:
+-            self.tokenizer_path = self.path
++            self.tokenizer_path = svd_init_aux_path or self.path
+ 
+         self.local_path = copy_to_local(self.path, use_shm=self.use_shm)
+ 
+diff --git a/verl/workers/fsdp_workers.py b/verl/workers/fsdp_workers.py
+index 424956f0..7cca5a6c 100644
+--- a/verl/workers/fsdp_workers.py
++++ b/verl/workers/fsdp_workers.py
+@@ -15,11 +15,15 @@
+ The main entry point to run the PPO algorithm
+ """
+ 
++import contextlib
+ import datetime
++import hashlib
+ import json
+ import logging
++import math
+ import os
+ import warnings
++from contextlib import contextmanager
+ from dataclasses import asdict
+ from typing import Any, Optional
+ 
+@@ -28,9 +32,10 @@ import psutil
+ import torch
+ import torch.distributed
+ import torch.distributed as dist
++import torch.nn.functional as F
+ from codetiming import Timer
+ from omegaconf import DictConfig, OmegaConf, open_dict
+-from peft import LoraConfig, TaskType, get_peft_model
++from peft import AdaLoraConfig, LoraConfig, TaskType, get_peft_model
+ from safetensors.torch import save_file
+ from torch.distributed.device_mesh import init_device_mesh
+ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+@@ -65,6 +70,7 @@ from verl.utils.fsdp_utils import (
+     MixedPrecisionPolicy,
+     apply_fsdp2,
+     collect_lora_params,
++    collect_merged_peft_params,
+     fsdp2_load_full_state_dict,
+     fsdp_version,
+     get_fsdp_wrap_policy,
+@@ -86,6 +92,7 @@ from verl.utils.profiler.performance import reduce_timing, topk_reduce_ratio_min
+ from verl.utils.py_functional import convert_to_regular_types
+ from verl.utils.ray_utils import get_event_loop
+ from verl.workers.config import FSDPCriticConfig, FSDPEngineConfig, HFModelConfig, RolloutConfig
++from verl.workers.config.model import _resolve_svd_init_aux_path
+ from verl.workers.config.optimizer import build_optimizer
+ from verl.workers.rollout import get_rollout_class
+ from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
+@@ -96,6 +103,87 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+ device_name = get_device_name()
+ 
+ 
++def _debug_base_kl_payload(old_log_prob: torch.Tensor, base_ref_log_prob: torch.Tensor, response_mask: torch.Tensor) -> dict:
++    diff = torch.clamp(old_log_prob - base_ref_log_prob, min=-20.0, max=20.0)
++    seq_den = response_mask.sum(dim=-1).clamp_min(1)
++    seq_base_kl = (-diff * response_mask).sum(dim=-1) / seq_den
++    return {
++        "old_mean": float(old_log_prob.mean().item()),
++        "base_ref_mean": float(base_ref_log_prob.mean().item()),
++        "diff_mean": float(diff.mean().item()),
++        "diff_abs_mean": float(diff.abs().mean().item()),
++        "masked_base_kl": float(verl_F.masked_mean(-diff, response_mask).item()),
++        "response_mask_sum": float(response_mask.sum().item()),
++        "seq_base_kl_head": seq_base_kl[:8].detach().cpu().tolist(),
++    }
++
++
++def _write_base_kl_debug(stage: str, payload: dict) -> str:
++    out_dir = os.getenv(
++        "VERL_BASE_KL_DEBUG_DIR",
++        "./outputs/base_kl_debug",
++    )
++    os.makedirs(out_dir, exist_ok=True)
++    exp_name = str(payload.get("experiment_name", "unknown_exp"))
++    path = os.path.join(out_dir, f"{exp_name}.{stage}.rank{payload.get('rank', 'x')}.json")
++    with open(path, "w", encoding="utf-8") as f:
++        json.dump(payload, f, ensure_ascii=True, sort_keys=True, indent=2)
++    return path
++
++
++def _write_rollout_policy_debug(stage: str, payload: dict) -> str:
++    out_dir = os.getenv(
++        "VERL_ROLLOUT_POLICY_DEBUG_DIR",
++        "./outputs/rollout_policy_debug",
++    )
++    os.makedirs(out_dir, exist_ok=True)
++    exp_name = str(payload.get("experiment_name", "unknown_exp"))
++    path_parts = [exp_name, stage, f"rank{payload.get('rank', 'x')}"]
++    if "sample_index" in payload:
++        path_parts.append(f"sample{payload['sample_index']}")
++    if "request_id" in payload:
++        path_parts.append(f"req{payload['request_id']}")
++    if "prompt_hash" in payload:
++        path_parts.append(f"prompt{payload['prompt_hash']}")
++    path = os.path.join(out_dir, ".".join(path_parts) + ".json")
++    with open(path, "w", encoding="utf-8") as f:
++        json.dump(payload, f, ensure_ascii=True, sort_keys=True, indent=2)
++    return path
++
++
++def _prompt_hash(token_ids: list[int]) -> str:
++    joined = ",".join(map(str, token_ids)).encode("utf-8")
++    return hashlib.sha1(joined).hexdigest()[:12]
++
++
++def _message_preview(raw_prompt: Any, max_items: int = 2) -> list[dict[str, Any]]:
++    if isinstance(raw_prompt, np.ndarray):
++        raw_prompt = raw_prompt.tolist()
++    if not isinstance(raw_prompt, list):
++        return []
++
++    preview = []
++    for message in raw_prompt[:max_items]:
++        if not isinstance(message, dict):
++            preview.append({"value": str(message)[:200]})
++            continue
++        content = message.get("content")
++        content_preview = content[:200] if isinstance(content, str) else str(content)[:200]
++        preview.append({"role": message.get("role"), "content_preview": content_preview})
++    return preview
++
++
++def _actor_adapter_state_payload(peft_model, extra: dict | None = None) -> dict:
++    payload = {
++        "has_peft_config": hasattr(peft_model, "peft_config"),
++        "active_adapters": list(getattr(peft_model, "active_adapters", [])) if peft_model is not None else [],
++        "disable_adapter_layers": bool(getattr(getattr(peft_model, "base_model", None), "_disable_adapter", False)),
++    }
++    if extra:
++        payload.update(extra)
++    return payload
++
++
+ def create_device_mesh(world_size, fsdp_size):
+     if fsdp_size < 0 or fsdp_size >= world_size:
+         device_mesh = init_device_mesh(device_name, mesh_shape=(world_size,), mesh_dim_names=["fsdp"])
+@@ -131,6 +219,99 @@ def get_vl_model_vision_tower(vl_model_instance):
+     return None
+ 
+ 
++def _haar_wavelet_rows(x: torch.Tensor) -> torch.Tensor:
++    """Apply in-place 1D Haar wavelet transform row-wise.
++
++    Args:
++        x: Tensor with shape [num_rows, num_cols].
++    Returns:
++        Tensor with the same shape, transformed row-wise.
++    """
++    if x.ndim != 2:
++        raise ValueError(f"Expected 2D tensor for Haar transform, got shape={tuple(x.shape)}")
++
++    num_rows, num_cols = x.shape
++    if num_cols <= 1:
++        return x
++
++    # Haar decomposition is simplest on power-of-two length.
++    target_cols = 1 << (num_cols - 1).bit_length()
++    if target_cols != num_cols:
++        x = F.pad(x, (0, target_cols - num_cols))
++
++    width = target_cols
++    inv_sqrt2 = 1.0 / math.sqrt(2.0)
++    while width > 1:
++        even = x[:, :width:2]
++        odd = x[:, 1:width:2]
++        avg = (even + odd) * inv_sqrt2
++        diff = (even - odd) * inv_sqrt2
++        x[:, : width // 2] = avg
++        x[:, width // 2 : width] = diff
++        width //= 2
++
++    return x[:, :num_cols]
++
++
++def _dct_lora_a(rows: int, cols: int, device: torch.device) -> torch.Tensor:
++    if rows > cols:
++        raise ValueError(f"DCT-LoRA requires rank <= in_features, got rank={rows}, in_features={cols}")
++    row_idx = torch.arange(rows, device=device, dtype=torch.float32).unsqueeze(1)
++    col_idx = torch.arange(cols, device=device, dtype=torch.float32).unsqueeze(0)
++    basis = torch.cos(math.pi * (2.0 * col_idx + 1.0) * row_idx / (2.0 * cols))
++    scale = torch.full((rows, 1), math.sqrt(2.0 / cols), device=device, dtype=torch.float32)
++    if rows > 0:
++        scale[0, 0] = math.sqrt(1.0 / cols)
++    return scale * basis
++
++
++def _init_lora_a_params(module: torch.nn.Module, init_method: str = "default", wavelet: str = "haar") -> int:
++    """Initialize LoRA-A weights with a configurable method.
++
++    Returns:
++        Number of LoRA-A matrices initialized.
++    """
++    method = str(init_method).lower()
++    if method in {"default", "none"}:
++        return 0
++    if method not in {"wavelet_orth", "dct", "dct_lora"}:
++        raise ValueError(f"Unsupported lora_A_init_method={init_method!r}")
++
++    if method == "wavelet_orth":
++        wavelet_name = str(wavelet).lower()
++        if wavelet_name != "haar":
++            raise ValueError(f"Unsupported lora_A_wavelet={wavelet!r}, only 'haar' is currently supported")
++
++    initialized = 0
++    with torch.no_grad():
++        for name, param in module.named_parameters():
++            if "lora_A" not in name or not name.endswith("weight"):
++                continue
++            if param.ndim != 2:
++                continue
++
++            rows, cols = param.shape
++            if rows == 0 or cols == 0:
++                continue
++
++            if method in {"dct", "dct_lora"}:
++                init_w = _dct_lora_a(rows, cols, param.device)
++            else:
++                base = torch.randn(rows, cols, device=param.device, dtype=torch.float32)
++                base = _haar_wavelet_rows(base)
++
++                if rows <= cols:
++                    q, _ = torch.linalg.qr(base.t(), mode="reduced")
++                    init_w = q.t()
++                else:
++                    # rows > cols cannot be fully row-orthogonal; normalize each row instead.
++                    init_w = F.normalize(base, p=2, dim=1, eps=1e-12)
++
++            param.copy_(init_w.to(dtype=param.dtype))
++            initialized += 1
++    return initialized
++
++
+ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+     """
+     This worker can be instantiated as a standalone actor or a standalone rollout or a standalone reference policy
+@@ -180,6 +361,13 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         self.ulysses_sharding_manager = FSDPUlyssesShardingManager(self.ulysses_device_mesh)
+         self._lora_rank = self.config.model.get("lora_rank", 0)
+         self._is_lora = self.config.model.get("lora_adapter_path") is not None or self._lora_rank > 0
++        # True when the base model weights were modified during adapter init (PiSSA/MiLoRA).
++        # In that case disable_adapter() returns W_res != W_pretrained, so ref computation
++        # must use the saved initial adapter weights instead of disabling the adapter.
++        self._is_svd_init = self.config.model.get("lora_residual_base", False)
++        self._init_lora_state: dict = {}  # {param_name: CPU tensor} saved before FSDP wrap
++        self._svd_ref_adapter_name: str | None = None
++        self._debug_step0_base_kl_logged = False
+ 
+         self.role = role
+         assert self.role in ["actor", "rollout", "ref", "actor_rollout", "actor_rollout_ref"]
+@@ -188,6 +376,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         self._is_rollout = self.role in ["rollout", "actor_rollout", "actor_rollout_ref"]
+         self._is_ref = self.role in ["ref", "actor_rollout_ref"]
+         self.use_orig_params = self.config.actor.fsdp_config.get("use_orig_params", False)
++        if self._is_lora or self.config.model.get("use_dora", False):
++            # Keep PEFT trainable params as original tensors so FSDP does not flatten
++            # them together with frozen base weights and silently skip updates.
++            self.use_orig_params = True
+ 
+         # TODO(haibin.lin):
+         # As of now the type of config is DictConfig, if we assign config.profiler with ProfilerConfig,
+@@ -296,11 +488,14 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+ 
+         log_gpu_memory_usage(f"Before init {role} from HF AutoModel", logger=logger)
+         local_path = model_path
++        aux_model_path = local_path
++        if self.config.model.get("lora_residual_base", False):
++            aux_model_path = _resolve_svd_init_aux_path(local_path, self.config.model.get("lora_adapter_path")) or local_path
+ 
+         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
+         # TODO(zhangchi.usc1992): 1. support create from random initialized model. 2. Support init with FSDP directly
+-        self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+-        self.processor = hf_processor(local_path, trust_remote_code=trust_remote_code)
++        self.tokenizer = hf_tokenizer(aux_model_path, trust_remote_code=trust_remote_code)
++        self.processor = hf_processor(aux_model_path, trust_remote_code=trust_remote_code)
+ 
+         if self.config.model.get("custom_chat_template", None) is not None:
+             if self.processor is not None:
+@@ -317,7 +512,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         # override model kwargs
+         attn_implementation = override_model_config.get("attn_implementation", "flash_attention_2")
+         actor_model_config = AutoConfig.from_pretrained(
+-            local_path, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation
++            aux_model_path, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation
+         )
+         # TODO: VL models use VisionAttention, which directly uses flash_attention in transformers>=4.53
+         # which will be patched by _ulysses_flash_attention_forward, but errorly misses position_ids
+@@ -329,7 +524,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         if getattr(actor_model_config, "model_type", None) == "kimi_vl":
+             actor_model_config.text_config.topk_method = "greedy"
+ 
+-        self.generation_config = get_generation_config(local_path, trust_remote_code=trust_remote_code)
++        self.generation_config = get_generation_config(aux_model_path, trust_remote_code=trust_remote_code)
+ 
+         override_config_kwargs = {
+             "bos_token_id": self.tokenizer.bos_token_id,
+@@ -420,25 +615,115 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+                 # Copy adapter to local if needed
+                 local_adapter_path = copy_to_local(lora_adapter_path, use_shm=self.config.model.get("use_shm", False))
+ 
+-                actor_module = PeftModel.from_pretrained(actor_module, local_adapter_path, is_trainable=True)
++                actor_module = PeftModel.from_pretrained(
++                    actor_module,
++                    local_adapter_path,
++                    is_trainable=True,
++                    low_cpu_mem_usage=True,
++                )
+                 peft_config = actor_module.peft_config["default"]
+                 # Ensure task_type is TaskType enum, not string
+                 if isinstance(peft_config.task_type, str):
+                     peft_config.task_type = TaskType.CAUSAL_LM
+ 
++                # For SVD-init adapters (PiSSA/MiLoRA) the base layer stores
++                # W_res = W_pretrained - delta_init, so disable_adapter() gives
++                # the wrong ref. Save the initial adapter and load a frozen copy as
++                # a dedicated reference adapter so the correct ref path stays on the
++                # standard PEFT forward without FSDP summon_full_params.
++                if self._is_svd_init:
++                    deferred = 0
++                    for name, param in actor_module.named_parameters():
++                        if "lora_A" not in name and "lora_B" not in name:
++                            continue
++                        if getattr(param, "is_meta", False):
++                            deferred += 1
++                            continue
++                        self._init_lora_state[name] = param.data.clone().cpu()
++
++                    self._svd_ref_adapter_name = "_base_ref"
++                    # FSDP init cannot handle an extra adapter that still has meta tensors.
++                    # Force the frozen reference adapter to materialize before wrapping.
++                    actor_module.load_adapter(
++                        local_adapter_path,
++                        adapter_name=self._svd_ref_adapter_name,
++                        is_trainable=False,
++                        low_cpu_mem_usage=False,
++                    )
++                    for name, param in actor_module.named_parameters():
++                        if f".{self._svd_ref_adapter_name}." in name:
++                            param.requires_grad = False
++
++                    if self.rank == 0:
++                        if deferred > 0:
++                            print(
++                                f"[SVD-init ref] Deferred saving {deferred} initial adapter parameters "
++                                "until after FSDP materialization."
++                            )
++                        else:
++                            print(
++                                f"[SVD-init ref] Saved {len(self._init_lora_state)} "
++                                f"initial adapter parameters for correct ref computation."
++                            )
++                        print(
++                            f"[SVD-init ref] Loaded frozen reference adapter '{self._svd_ref_adapter_name}' "
++                            "for correct base-model KL computation."
++                        )
++                disabled_dropout = self._disable_lora_dropout(actor_module)
++                if self.rank == 0 and disabled_dropout > 0:
++                    print(f"[LoRA] Disabled {disabled_dropout} LoRA dropout modules on loaded adapter")
++                self._maybe_freeze_lora_A(actor_module)
++
+             else:
+                 # Convert config to regular Python types before creating PEFT model
+                 lora_config = {
+                     "task_type": TaskType.CAUSAL_LM,
+                     "r": self.config.model.lora_rank,
+                     "lora_alpha": self.config.model.lora_alpha,
++                    "use_dora": self.config.model.use_dora,
+                     "target_modules": convert_to_regular_types(self.config.model.target_modules),
+                     "exclude_modules": convert_to_regular_types(self.config.model.exclude_modules),
+                     "bias": "none",
+                 }
+-                actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
++                if self.config.model.get("use_adalora", False):
++                    adalora_config = {
++                        "task_type": TaskType.CAUSAL_LM,
++                        "init_r": self.config.model.get("adalora_init_r") or self.config.model.lora_rank,
++                        "target_r": self.config.model.get("adalora_target_r") or self.config.model.lora_rank,
++                        "lora_alpha": self.config.model.lora_alpha,
++                        "target_modules": convert_to_regular_types(self.config.model.target_modules),
++                        "beta1": self.config.model.get("adalora_beta1", 0.85),
++                        "beta2": self.config.model.get("adalora_beta2", 0.85),
++                        "tinit": self.config.model.get("adalora_tinit", 0),
++                        "tfinal": self.config.model.get("adalora_tfinal", 0),
++                        "deltaT": self.config.model.get("adalora_delta_t", 1),
++                        "total_step": self.config.actor.optim.get("total_training_steps", 0),
++                        "orth_reg_weight": self.config.model.get("adalora_orth_reg_weight", 0.5),
++                    }
++                    actor_module = get_peft_model(actor_module, AdaLoraConfig(**adalora_config))
++                    actor_module.to(torch_dtype)
++                else:
++                    actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
++                disabled_dropout = self._disable_lora_dropout(actor_module)
++                if self.rank == 0 and disabled_dropout > 0:
++                    print(f"[LoRA] Disabled {disabled_dropout} LoRA dropout modules on actor")
++                self._maybe_freeze_lora_A(actor_module)
++                init_count = _init_lora_a_params(
++                    actor_module,
++                    init_method=self.config.model.get("lora_A_init_method", "default"),
++                    wavelet=self.config.model.get("lora_A_wavelet", "haar"),
++                )
++                if self.rank == 0 and init_count > 0:
++                    init_desc = f"method={self.config.model.get('lora_A_init_method')}"
++                    if self.config.model.get("lora_A_init_method") == "wavelet_orth":
++                        init_desc += f" wavelet={self.config.model.get('lora_A_wavelet', 'haar')}"
++                    print(f"Applied LoRA-A init {init_desc} to {init_count} actor matrices.")
+ 
+         self.use_orig_params = fsdp_config.get("use_orig_params", False)
++        if self._is_lora or self.config.model.get("use_dora", False) or self.config.model.get("use_adalora", False):
++            self.use_orig_params = True
++            if self.rank == 0:
++                print("[actor model] Enabling use_orig_params=True for LoRA/DoRA/AdaLoRA under FSDP.")
+         if self.config.actor.get("freeze_vision_tower", False):
+             vision_tower = get_vl_model_vision_tower(actor_module)
+             if vision_tower is not None:
+@@ -473,7 +758,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         auto_wrap_policy = get_fsdp_wrap_policy(
+             module=actor_module,
+             config=fsdp_config.get("wrap_policy", None),
+-            is_lora=self._is_lora,
++            is_lora=self._is_lora
++            and not self.config.model.get("use_dora", False)
++            and not self.config.model.get("use_adalora", False),
+         )
+ 
+         # if self._is_rollout and self.config.rollout.name == "hf":
+@@ -539,8 +826,18 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+ 
+         # TODO: add more optimizer args into config
+         if role == "actor" and optim_config is not None:
++            from copy import deepcopy
++
+             from verl.utils.torch_functional import get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup
+ 
++            optim_config = deepcopy(optim_config)
++            if self.config.model.use_dora:
++                override_cfg = dict(optim_config.override_optimizer_config or {})
++                override_cfg.setdefault("foreach", False)
++                optim_config.override_optimizer_config = override_cfg
++                if self.rank == 0:
++                    print("Disabling foreach optimizer path for DoRA actor training.")
++
+             actor_optimizer = build_optimizer(actor_module_fsdp.parameters(), optim_config)
+ 
+             total_steps = optim_config.get("total_training_steps", 0)
+@@ -661,19 +958,66 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         log_gpu_memory_usage("After load_fsdp_model_to_gpu", logger=logger)
+ 
+         peft_config = None
++        rollout_sync_mode = "full_weights"
+         peft_model = getattr(self.actor_module_fsdp, "_fsdp_wrapped_module", self.actor_module_fsdp)
+-        if hasattr(peft_model, "peft_config"):  # LoRA
++        if hasattr(peft_model, "peft_config"):  # LoRA / DoRA
+             peft_config = peft_model.peft_config.get("default", None)
+-            params = collect_lora_params(
+-                module=self.actor_module_fsdp,
+-                layered_summon=self.config.rollout.get("layered_summon", False),
+-                base_sync_done=self.base_sync_done,
+-            )
+-            if not self.base_sync_done:
++            if self._is_svd_init and not self.base_sync_done:
++                logger.info(
++                    "Rollout first sync for SVD-init adapters uses the original pretrained base model "
++                    "instead of merged residual weights so vLLM matches the LoRA baseline path."
++                )
++                params = self._collect_svd_init_pretrained_rollout_params(peft_config)
++                # SVD-init variants (PiSSA, MiLoRA, OLoRA residual-base bundles) still run vLLM
++                # with LoRA wrappers enabled, so pretrained full weights must target base_layer.*
++                # keys just like the normal first-sync LoRA path.
+                 params = {replace_lora_wrapper(k, peft_config): v for k, v in params.items()}
++                peft_config = None
++                rollout_sync_mode = "svd_init_original_pretrained_full_weights"
++            elif getattr(peft_config, "use_dora", False) or str(getattr(peft_config, "peft_type", "")).endswith(
++                "ADALORA"
++            ):
++                logger.info(
++                    "Rollout sync uses merged full weights for DoRA/AdaLoRA because "
++                    "vLLM adapter loading is unsupported or unsafe for this PEFT type."
++                )
++                params = collect_merged_peft_params(module=self.actor_module_fsdp)
++                peft_config = None
++                rollout_sync_mode = "merged_full_weights"
++            else:
++                params = collect_lora_params(
++                    module=self.actor_module_fsdp,
++                    layered_summon=self.config.rollout.get("layered_summon", False),
++                    base_sync_done=self.base_sync_done,
++                )
++                rollout_sync_mode = "lora_delta" if self.base_sync_done else "initial_base_plus_lora_named_weights"
++                if not self.base_sync_done:
++                    params = {replace_lora_wrapper(k, peft_config): v for k, v in params.items()}
+         else:
+             params = self.actor_module_fsdp.state_dict()
+ 
++        if self.rank == 0:
++            with contextlib.suppress(Exception):
++                debug_path = _write_rollout_policy_debug(
++                    "rollout_sync",
++                    {
++                        "experiment_name": str(getattr(self, "experiment_name", "unknown_exp")),
++                        "rank": int(self.rank),
++                        "base_sync_done_before": bool(self.base_sync_done),
++                        "is_svd_init": bool(self._is_svd_init),
++                        "is_lora": bool(self._is_lora),
++                        "rollout_sync_mode": rollout_sync_mode,
++                        "rollout_model_path": str(self.config.model.path),
++                        "rollout_has_peft_config": peft_config is not None,
++                        "peft_type": str(getattr(peft_config, "peft_type", "none")) if peft_config is not None else "none",
++                        "active_adapter": (
++                            peft_model.active_adapters[0] if getattr(peft_model, "active_adapters", None) else None
++                        ),
++                        "lora_adapter_path": str(self.config.model.get("lora_adapter_path", "")),
++                    },
++                )
++                print(f"[DEBUG rollout policy] wrote {debug_path}")
++
+         params = convert_weight_keys(
+             params, getattr(self.actor_module_fsdp, "_fsdp_wrapped_module", self.actor_module_fsdp)
+         )
+@@ -873,11 +1217,65 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+             load_fsdp_optimizer(optimizer=self.actor_optimizer, device_id=get_device_id())
+ 
+         with self.ulysses_sharding_manager:
++            # Base-KL logging can route meta_info through non-dict containers on some Ray paths.
++            with contextlib.suppress(Exception):
++                from omegaconf import DictConfig as OmegaDictConfig
++                from omegaconf import OmegaConf
++
++                if isinstance(data.meta_info, OmegaDictConfig):
++                    normalized = OmegaConf.to_container(data.meta_info, resolve=True)
++                    if isinstance(normalized, dict):
++                        data.meta_info = normalized
++
++            if not isinstance(data.meta_info, dict):
++                with contextlib.suppress(Exception):
++                    data.meta_info = dict(data.meta_info)
++            if not isinstance(data.meta_info, dict):
++                data.meta_info = {}
++
++            pre_update_base_model_kl = None
++            safe_base_ref_log_prob = None
++            if data.meta_info.get("log_base_model_kl", False) and "base_ref_log_prob" not in data.batch:
++                data = data.union(self._compute_base_log_prob_from_actor(data, output_key="base_ref_log_prob"))
++                if "old_log_probs" in data.batch:
++                    response_mask = data.batch.get("response_mask")
++                    base_ref_log_prob = data.batch.get("base_ref_log_prob")
++                    old_log_prob = data.batch.get("old_log_probs")
++                    if response_mask is not None and base_ref_log_prob is not None and old_log_prob is not None:
++                        negative_approx_base_kl = torch.clamp(old_log_prob - base_ref_log_prob, min=-20.0, max=20.0)
++                        step0_base_model_kl = verl_F.masked_mean(-negative_approx_base_kl, response_mask)
++                        pre_update_base_model_kl = float(step0_base_model_kl.detach().item())
++                        data.meta_info["debug_step0_base_model_kl"] = pre_update_base_model_kl
++                        safe_base_ref_log_prob = base_ref_log_prob.detach().clone().cpu().contiguous()
++                        global_step = int(data.meta_info.get("global_steps", -1))
++                        if not self._debug_step0_base_kl_logged and self.rank == 0:
++                            self._debug_step0_base_kl_logged = True
++                            debug_payload = {
++                                "stage": "pre_update",
++                                "experiment_name": str(data.meta_info.get("experiment_name", "unknown_exp")),
++                                "global_step": global_step,
++                                "rank": int(self.rank),
++                                **_debug_base_kl_payload(old_log_prob, base_ref_log_prob, response_mask),
++                            }
++                            debug_path = _write_base_kl_debug("pre_update", debug_payload)
++                            print(f"[DEBUG pre-update base KL] wrote {debug_path}")
++                # Base-model KL logging may offload the actor back to CPU; reload before training forward.
++                if self._is_offload_param:
++                    load_fsdp_model_to_gpu(self.actor_module_fsdp)
++
++            if safe_base_ref_log_prob is None and "base_ref_log_prob" in data.batch:
++                safe_base_ref_log_prob = data.batch["base_ref_log_prob"].detach().clone().cpu().contiguous()
++
+             data = data.to("cpu")  # data will to device with each micro batch on actor.update_policy
++            if safe_base_ref_log_prob is not None:
++                # TensorDict may be locked after the device move; overwrite the existing slot in-place.
++                data.batch.set_("base_ref_log_prob", safe_base_ref_log_prob)
+ 
+             # perform training
+             with Timer(name="update_policy", logger=None) as timer:
+                 metrics = self.actor.update_policy(data=data)
++            if pre_update_base_model_kl is not None:
++                metrics["actor/base_model_kl_pre_update"] = pre_update_base_model_kl
+             delta_time = timer.last
+             global_num_tokens = data.meta_info["global_token_num"]
+             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
+@@ -923,6 +1321,38 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         }
+         prompts.meta_info.update(meta_info)
+ 
++        if self.rank == 0:
++            with contextlib.suppress(Exception):
++                sample_index = None
++                raw_prompt = None
++                raw_prompt_ids = None
++                if "index" in prompts.non_tensor_batch:
++                    sample_index = int(prompts.non_tensor_batch["index"][0])
++                if "raw_prompt" in prompts.non_tensor_batch:
++                    raw_prompt = prompts.non_tensor_batch["raw_prompt"][0]
++                if "raw_prompt_ids" in prompts.non_tensor_batch:
++                    raw_prompt_ids = prompts.non_tensor_batch["raw_prompt_ids"][0]
++                    if isinstance(raw_prompt_ids, np.ndarray):
++                        raw_prompt_ids = raw_prompt_ids.tolist()
++                prompt_ids = prompts.batch["input_ids"][0].detach().cpu().tolist()
++                prompt_mask = prompts.batch["attention_mask"][0].detach().cpu().tolist()
++                valid_prompt_ids = [token_id for token_id, mask in zip(prompt_ids, prompt_mask, strict=False) if mask]
++                debug_path = _write_rollout_policy_debug(
++                    "rollout_input",
++                    {
++                        "experiment_name": str(getattr(self, "experiment_name", "unknown_exp")),
++                        "rank": int(self.rank),
++                        "sample_index": sample_index,
++                        "prompt_hash": _prompt_hash(valid_prompt_ids),
++                        "prompt_len": int(len(valid_prompt_ids)),
++                        "prompt_ids_head": list(valid_prompt_ids[:128]),
++                        "raw_prompt_ids_len": int(len(raw_prompt_ids)) if raw_prompt_ids is not None else None,
++                        "raw_prompt_ids_head": list(raw_prompt_ids[:128]) if raw_prompt_ids is not None else None,
++                        "raw_prompt_preview": _message_preview(raw_prompt),
++                    },
++                )
++                print(f"[DEBUG rollout input] wrote {debug_path}")
++
+         timing_generate = {}
+         if self._is_actor:  # For rollout only, we do not switch context.
+             loop = get_event_loop()
+@@ -970,6 +1400,18 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+ 
+         is_lora = data.meta_info.pop("is_lora", False)
+         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
++        peft_model = getattr(self.actor, "actor_module", None)
++        if self.rank == 0:
++            with contextlib.suppress(Exception):
++                debug_path = _write_rollout_policy_debug(
++                    "actor_compute_log_prob",
++                    {
++                        "experiment_name": str(getattr(self, "experiment_name", "unknown_exp")),
++                        "rank": int(self.rank),
++                        **_actor_adapter_state_payload(peft_model, {"is_lora_flag": bool(is_lora)}),
++                    },
++                )
++                print(f"[DEBUG actor compute_log_prob policy] wrote {debug_path}")
+         # we should always recompute old_log_probs when it is HybridEngine
+         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
+         data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
+@@ -997,16 +1439,126 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+ 
+         return output
+ 
++    def _disable_lora_dropout(self, model) -> int:
++        disabled = 0
++        for module in model.modules():
++            lora_dropout = getattr(module, "lora_dropout", None)
++            if lora_dropout is None:
++                continue
++            if isinstance(lora_dropout, dict):
++                values = lora_dropout.values()
++            else:
++                values = getattr(lora_dropout, "values", lambda: [])()
++            for dropout_layer in values:
++                if hasattr(dropout_layer, "p") and dropout_layer.p != 0.0:
++                    dropout_layer.p = 0.0
++                    disabled += 1
++        return disabled
++
++    def _maybe_freeze_lora_A(self, model) -> None:
++        if not self.config.model.get("freeze_lora_A", False):
++            return
++        frozen = 0
++        for name, param in model.named_parameters():
++            if "lora_A" in name:
++                param.requires_grad = False
++                frozen += 1
++        if self.rank == 0:
++            print(f"[LoRA] Frozen lora_A parameters: {frozen}")
++
++    def _collect_svd_init_pretrained_rollout_params(self, peft_config) -> dict[str, torch.Tensor]:
++        from transformers import AutoModelForCausalLM
++
++        pretrained_path = getattr(peft_config, "base_model_name_or_path", None) if peft_config is not None else None
++        if not pretrained_path:
++            raise ValueError("SVD-init rollout sync requires peft_config.base_model_name_or_path")
++
++        local_pretrained_path = copy_to_local(pretrained_path, use_shm=self.config.model.get("use_shm", False))
++        if self.rank == 0:
++            logger.info(
++                "Rollout first sync for SVD-init adapters now loads the original pretrained base model from %s",
++                local_pretrained_path,
++            )
++
++        pretrained_model = AutoModelForCausalLM.from_pretrained(
++            pretrained_model_name_or_path=local_pretrained_path,
++            torch_dtype=torch.float32,
++            trust_remote_code=self.config.model.get("trust_remote_code", False),
++            device_map="cpu",
++        )
++        try:
++            return {name: param.detach().cpu() for name, param in pretrained_model.state_dict().items()}
++        finally:
++            del pretrained_model
++
++    @contextmanager
++    def _svd_init_adapter_ctx(self):
++        """Temporarily switch to the frozen initial PiSSA/MiLoRA adapter.
++
++        For SVD-init adapters the residual base stores W_res, so correct base-model KL
++        needs W_pretrained = W_res + delta_init. A dedicated frozen adapter gives that
++        behavior without triggering FSDP summon_full_params/all-gathers mid-step.
++        """
++        peft_model = getattr(self.actor, "actor_module", None)
++        adapter_name = self._svd_ref_adapter_name
++
++        if peft_model is None or adapter_name is None:
++            if self.rank == 0:
++                logger.warning(
++                    "[SVD-init ref] Frozen reference adapter missing: falling back to current adapter. "
++                    "Base-model KL may be inaccurate."
++                )
++            yield
++            return
++
++        previous_adapter = peft_model.active_adapters[0] if peft_model.active_adapters else "default"
++        peft_model.base_model.set_adapter(adapter_name, inference_mode=True)
++        peft_model.active_adapter = adapter_name
++        try:
++            yield
++        finally:
++            peft_model.base_model.set_adapter(previous_adapter, inference_mode=False)
++            peft_model.active_adapter = previous_adapter
++
++    def _compute_base_log_prob_from_actor(self, data: DataProto, output_key: str) -> DataProto:
++        if self._is_lora:
++            if self._is_svd_init:
++                # SVD-init (PiSSA/MiLoRA): base = W_pretrained = W_res + A_init @ B_init.
++                with self._svd_init_adapter_ctx():
++                    data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
++                    data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
++                    data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
++                    data.meta_info["temperature"] = self.config.rollout.temperature
++                    if self._is_offload_param:
++                        load_fsdp_model_to_gpu(self.actor_module_fsdp)
++                    with self.ulysses_sharding_manager:
++                        output, _ = self.actor.compute_log_prob(data=data, calculate_entropy=False)
++                    if self._is_offload_param:
++                        offload_fsdp_model_to_cpu(self.actor_module_fsdp)
++                return DataProto.from_dict(tensors={output_key: output.to("cpu")})
++
++            # Standard LoRA/plus/b0: disable_adapter() exposes the underlying base model.
++            data.meta_info["is_lora"] = True
++            data = self.compute_log_prob(data)
++            return DataProto.from_dict(tensors={output_key: data.batch["old_log_probs"]})
++
++        data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
++        data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
++        data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
++        data.meta_info["temperature"] = self.config.rollout.temperature
++        if self._is_offload_param:
++            load_fsdp_model_to_gpu(self.actor_module_fsdp)
++        with self.ulysses_sharding_manager:
++            output, _ = self.actor.compute_log_prob(data=data, calculate_entropy=False)
++        if self._is_offload_param:
++            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
++        return DataProto.from_dict(tensors={output_key: output.to("cpu")})
++
+     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="actor"))
+     @DistProfiler.annotate(color="olive", role="ref_compute_log_prob")
+     def compute_ref_log_prob(self, data: DataProto):
+         if self._is_lora:
+-            # if _is_lora, actor without lora applied is the ref
+-            data.meta_info["is_lora"] = True
+-            data = self.compute_log_prob(data)
+-            # this old_log_probs is in fact ref_log_prob
+-            data = DataProto.from_dict(tensors={"ref_log_prob": data.batch["old_log_probs"]})
+-            return data
++            return self._compute_base_log_prob_from_actor(data, output_key="ref_log_prob")
+         assert self._is_ref
+         # else:
+         # otherwise, the class have a standalone ref model
+@@ -1033,6 +1585,12 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+ 
+         return output
+ 
++    @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="actor"))
++    @DistProfiler.annotate(color="teal", role="base_ref_compute_log_prob")
++    def compute_base_ref_log_prob(self, data: DataProto):
++        assert self._is_actor, "base-model log prob can only be computed on actor workers"
++        return self._compute_base_log_prob_from_actor(data, output_key="base_ref_log_prob")
++
+     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+     def save_checkpoint(self, local_path, hdfs_path=None, global_step=0, max_ckpt_to_keep=None):
+         from verl.utils.logger import log_with_rank
+@@ -1317,11 +1875,18 @@ class CriticWorker(Worker, DistProfilerExtension):
+                 # Copy adapter to local if needed
+                 local_adapter_path = copy_to_local(lora_adapter_path, use_shm=self.config.model.get("use_shm", False))
+ 
+-                critic_module = PeftModel.from_pretrained(critic_module, local_adapter_path, is_trainable=True)
++                critic_module = PeftModel.from_pretrained(
++                    critic_module,
++                    local_adapter_path,
++                    is_trainable=True,
++                    low_cpu_mem_usage=True,
++                )
+                 peft_config = critic_module.peft_config["default"]
+                 # Ensure task_type is TaskType enum, not string
+                 if isinstance(peft_config.task_type, str):
+                     peft_config.task_type = TaskType.CAUSAL_LM
++                if self.config.model.get("use_adalora", False):
++                    critic_module.to(torch_dtype)
+ 
+             else:
+                 # Convert config to regular Python types before creating PEFT model
+@@ -1332,7 +1897,35 @@ class CriticWorker(Worker, DistProfilerExtension):
+                     "target_modules": convert_to_regular_types(self.config.model.target_modules),
+                     "bias": "none",
+                 }
+-                critic_module = get_peft_model(critic_module, LoraConfig(**lora_config))
++                if self.config.model.get("use_adalora", False):
++                    adalora_config = {
++                        "task_type": TaskType.CAUSAL_LM,
++                        "init_r": self.config.model.get("adalora_init_r") or self.config.model.lora_rank,
++                        "target_r": self.config.model.get("adalora_target_r") or self.config.model.lora_rank,
++                        "lora_alpha": self.config.model.lora_alpha,
++                        "target_modules": convert_to_regular_types(self.config.model.target_modules),
++                        "beta1": self.config.model.get("adalora_beta1", 0.85),
++                        "beta2": self.config.model.get("adalora_beta2", 0.85),
++                        "tinit": self.config.model.get("adalora_tinit", 0),
++                        "tfinal": self.config.model.get("adalora_tfinal", 0),
++                        "deltaT": self.config.model.get("adalora_delta_t", 1),
++                        "total_step": self.config.critic.optim.get("total_training_steps", 0),
++                        "orth_reg_weight": self.config.model.get("adalora_orth_reg_weight", 0.5),
++                    }
++                    critic_module = get_peft_model(critic_module, AdaLoraConfig(**adalora_config))
++                    critic_module.to(torch_dtype)
++                else:
++                    critic_module = get_peft_model(critic_module, LoraConfig(**lora_config))
++                init_count = _init_lora_a_params(
++                    critic_module,
++                    init_method=self.config.model.get("lora_A_init_method", "default"),
++                    wavelet=self.config.model.get("lora_A_wavelet", "haar"),
++                )
++                if self.rank == 0 and init_count > 0:
++                    init_desc = f"method={self.config.model.get('lora_A_init_method')}"
++                    if self.config.model.get("lora_A_init_method") == "wavelet_orth":
++                        init_desc += f" wavelet={self.config.model.get('lora_A_wavelet', 'haar')}"
++                    print(f"Applied LoRA-A init {init_desc} to {init_count} critic matrices.")
+ 
+         if self.rank == 0:
+             print_model_size(critic_module)
+@@ -1355,7 +1948,9 @@ class CriticWorker(Worker, DistProfilerExtension):
+         auto_wrap_policy = get_fsdp_wrap_policy(
+             module=critic_module,
+             config=self.config.model.fsdp_config.wrap_policy,
+-            is_lora=self._is_lora,
++            is_lora=self._is_lora
++            and not self.config.model.get("use_dora", False)
++            and not self.config.model.get("use_adalora", False),
+         )
+ 
+         log_gpu_memory_usage("Before critic FSDP", logger=None)
+diff --git a/verl/workers/rollout/vllm_rollout/vllm_async_server.py b/verl/workers/rollout/vllm_rollout/vllm_async_server.py
+index 7fc9f86e..714796c2 100644
+--- a/verl/workers/rollout/vllm_rollout/vllm_async_server.py
++++ b/verl/workers/rollout/vllm_rollout/vllm_async_server.py
+@@ -13,6 +13,8 @@
+ # limitations under the License.
+ import argparse
+ import asyncio
++import contextlib
++import hashlib
+ import json
+ import logging
+ import os
+@@ -59,6 +61,43 @@ logger = logging.getLogger(__file__)
+ logger.setLevel(logging.INFO)
+ 
+ 
++def _write_rollout_policy_debug(stage: str, payload: dict) -> str:
++    out_dir = os.getenv(
++        "VERL_ROLLOUT_POLICY_DEBUG_DIR",
++        "./outputs/rollout_policy_debug",
++    )
++    os.makedirs(out_dir, exist_ok=True)
++    exp_name = str(payload.get("experiment_name", "unknown_exp"))
++    path_parts = [exp_name, stage, f"replica{payload.get('replica_rank', 'x')}"]
++    if "sample_index" in payload:
++        path_parts.append(f"sample{payload['sample_index']}")
++    if "request_id" in payload:
++        path_parts.append(f"req{payload['request_id']}")
++    if "prompt_hash" in payload:
++        path_parts.append(f"prompt{payload['prompt_hash']}")
++    path = os.path.join(out_dir, ".".join(path_parts) + ".json")
++    with open(path, "w", encoding="utf-8") as f:
++        json.dump(payload, f, ensure_ascii=True, sort_keys=True, indent=2)
++    return path
++
++
++def _prompt_hash(token_ids: list[int]) -> str:
++    joined = ",".join(map(str, token_ids)).encode("utf-8")
++    return hashlib.sha1(joined).hexdigest()[:12]
++
++
++def _resolve_rollout_runtime_model_path(model_config: HFModelConfig) -> tuple[str, str]:
++    runtime_path = model_config.local_path or model_config.path
++    runtime_source = "configured_model_path"
++
++    # For residual-base SVD/OLoRA-style adapters, rollout must use the configured
++    # residual base path so that vLLM serves the same effective policy as the
++    # training actor after applying LoRA deltas. Redirecting rollout to the
++    # adapter's original pretrained base_model_name_or_path makes rollout serve
++    # W + delta_W_t instead of W_res + delta_W_t, which breaks policy alignment.
++    return runtime_path, runtime_source
++
++
+ class ExternalZeroMQDistributedExecutor(Executor):
+     """An executor that engines are launched by external ray actors."""
+ 
+@@ -153,6 +192,9 @@ class vLLMHttpServerBase:
+ 
+         self.config: RolloutConfig = omega_conf_to_dataclass(config)
+         self.model_config: HFModelConfig = omega_conf_to_dataclass(model_config, dataclass_type=HFModelConfig)
++        self.rollout_runtime_model_path, self.rollout_runtime_model_source = _resolve_rollout_runtime_model_path(
++            self.model_config
++        )
+         self.config.max_model_len = self.config.prompt_length + self.config.response_length
+         self.rollout_mode = rollout_mode
+         self.workers = workers
+@@ -161,13 +203,14 @@ class vLLMHttpServerBase:
+         self.node_rank = node_rank
+         self.gpus_per_node = gpus_per_node
+         self.nnodes = nnodes
++        self._debug_generate_written = False
+ 
+         if self.rollout_mode != RolloutMode.HYBRID and self.config.load_format == "dummy":
+             logger.warning(f"rollout mode is {self.rollout_mode}, load_format is dummy, set to auto")
+             self.config.load_format = "auto"
+ 
+         # used for http server
+-        self._server_address = ray.util.get_node_ip_address().strip("[]")
++        self._server_address = os.environ.get("VERL_SERVER_HOST", ray.util.get_node_ip_address().strip("[]"))
+         self._server_port = None
+ 
+         # used for data parallel: --data-parallel-address, --data-parallel-rpc-port
+@@ -297,7 +340,7 @@ class vLLMHttpServerBase:
+         if self.config.enable_rollout_routing_replay:
+             args.update({"enable_return_routed_experts": True})
+ 
+-        server_args = ["serve", self.model_config.local_path]
++        server_args = ["serve", self.rollout_runtime_model_path]
+         for k, v in args.items():
+             if isinstance(v, bool):
+                 if v:
+@@ -411,14 +454,44 @@ class vLLMHttpServerBase:
+ 
+         # Add lora request
+         lora_request = None
++        loaded_loras = []
+         if self.model_config.lora_rank > 0:
+             # Make sure we also check that the lora is already loaded in the engine
+-            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
++            loaded_loras = await self.engine.list_loras()
++            lora_loaded = VLLM_LORA_INT_ID in loaded_loras
+             if lora_loaded:
+                 lora_request = LoRARequest(
+                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
+                 )
+ 
++        prompt_hash = _prompt_hash(prompt_ids)
++
++        if self.replica_rank == 0 and self.node_rank == 0:
++            debug_path = _write_rollout_policy_debug(
++                "generate",
++                {
++                    "experiment_name": str(getattr(self.config, "experiment_name", "unknown_exp")),
++                    "replica_rank": int(self.replica_rank),
++                    "node_rank": int(self.node_rank),
++                    "request_id": str(request_id),
++                    "prompt_hash": prompt_hash,
++                    "model_path": str(self.rollout_runtime_model_path),
++                    "model_path_source": str(self.rollout_runtime_model_source),
++                    "lora_rank": int(self.model_config.lora_rank),
++                    "loaded_loras": list(loaded_loras),
++                    "lora_request_used": lora_request is not None,
++                    "lora_request_path": str(getattr(lora_request, "lora_path", None)),
++                    "lora_request_name": str(getattr(lora_request, "lora_name", None)),
++                    "lora_request_int_id": int(getattr(lora_request, "lora_int_id", -1))
++                    if lora_request is not None
++                    else None,
++                    "max_tokens": int(max_tokens),
++                    "prompt_len": int(len(prompt_ids)),
++                    "prompt_ids_head": list(prompt_ids[:128]),
++                },
++            )
++            logger.info(f"[DEBUG rollout generate policy] wrote {debug_path}")
++
+         generator = self.engine.generate(
+             prompt=prompt, sampling_params=sampling_params, request_id=request_id, lora_request=lora_request
+         )
+@@ -430,6 +503,28 @@ class vLLMHttpServerBase:
+         assert final_res is not None
+ 
+         token_ids = final_res.outputs[0].token_ids
++        if self.replica_rank == 0 and self.node_rank == 0:
++            with contextlib.suppress(Exception):
++                debug_path = _write_rollout_policy_debug(
++                    "generate_result",
++                    {
++                        "experiment_name": str(getattr(self.config, "experiment_name", "unknown_exp")),
++                        "replica_rank": int(self.replica_rank),
++                        "node_rank": int(self.node_rank),
++                        "request_id": str(request_id),
++                        "prompt_hash": prompt_hash,
++                        "model_path": str(self.rollout_runtime_model_path),
++                        "model_path_source": str(self.rollout_runtime_model_source),
++                        "lora_rank": int(self.model_config.lora_rank),
++                        "loaded_loras": list(loaded_loras),
++                        "lora_request_used": lora_request is not None,
++                        "prompt_len": int(len(prompt_ids)),
++                        "prompt_ids_head": list(prompt_ids[:128]),
++                        "response_len": int(len(token_ids)),
++                        "response_ids_head": list(token_ids[:256]),
++                    },
++                )
++                logger.info(f"[DEBUG rollout generate result] wrote {debug_path}")
+         log_probs = None
+         if sampling_params.logprobs is not None:
+             log_probs = [logprobs[token_ids[i]].logprob for i, logprobs in enumerate(final_res.outputs[0].logprobs)]
+diff --git a/verl/workers/rollout/vllm_rollout/vllm_rollout.py b/verl/workers/rollout/vllm_rollout/vllm_rollout.py
+index 42a1cd96..73db41c1 100644
+--- a/verl/workers/rollout/vllm_rollout/vllm_rollout.py
++++ b/verl/workers/rollout/vllm_rollout/vllm_rollout.py
+@@ -203,11 +203,17 @@ class vLLMAsyncRollout(BaseRollout):
+         self.inference_engine.load_model(*args, **kwargs)
+         _monkey_patch_compute_logits(self.inference_engine.worker.model_runner.model, len(self.tokenizer))
+ 
++    def _add_lora_adapter(self, lora_request):
++        """Add LoRA adapter to the inference engine."""
++        self.inference_engine.worker.add_lora(lora_request)
++
+     async def _execute_method(self, method: str | bytes, *args, **kwargs):
+         if method == "init_worker":
+             return self._init_worker(*args, **kwargs)
+         elif method == "load_model":
+             return self._load_model(*args, **kwargs)
++        elif method == "add_lora_adapter":
++            return self._add_lora_adapter(*args, **kwargs)
+         else:
+             return self.inference_engine.execute_method(method, *args, **kwargs)
+ 
+@@ -235,21 +241,23 @@ class vLLMAsyncRollout(BaseRollout):
+         if peft_config and base_sync_done:
+             # In async mode, make sure the old lora is removed before adding the new one
+             self.inference_engine.worker.remove_lora(VLLM_LORA_INT_ID)
++            lora_tensors = dict(weights)
+             lora_request = TensorLoRARequest(
+                 lora_name=VLLM_LORA_NAME,
+                 lora_int_id=VLLM_LORA_INT_ID,
+                 lora_path=VLLM_LORA_PATH,
+                 peft_config=asdict(peft_config),
+-                lora_tensors=dict(weights),
++                lora_tensors=lora_tensors,
+             )
+             self.inference_engine.worker.add_lora(lora_request)
+-            logger.info(f"vLLM load weights, loaded_params: {len(weights)}")
++            logger.info(f"vLLM load weights, loaded_params: {len(lora_tensors)}")
+         else:
+-            from verl.utils.vllm.patch import patch_vllm_moe_model_weight_loader
++            from verl.utils.vllm.patch import patch_vllm_moe_model_weight_loader, patch_vllm_qwen2_packed_weight_loader
+ 
+             model_runner = self.inference_engine.worker.model_runner
+             model = model_runner.model
+             patch_vllm_moe_model_weight_loader(model)
++            patch_vllm_qwen2_packed_weight_loader()
+ 
+             # Add the FP8 related logic here as sharding manager has been deprecated.
+             # Check if FP8 quantization is enabled and apply appropriate weight loading

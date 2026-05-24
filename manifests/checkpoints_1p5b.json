@@ -1,0 +1,868 @@
+[
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_paper_seed41_r16_a32_lr1e5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed41_r16_a32_lr1e5",
+    "num_steps": 21,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_850",
+      "global_step_900",
+      "global_step_950",
+      "global_step_1000",
+      "global_step_1024"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_paper_seed42_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed42_r16_a32_lr1e5_s500",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_paper_seed42_steps500_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed42_steps500_r1",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_paper_seed43_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed43_r16_a32_lr1e5_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_paper_seed44_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_paper_seed44_r16_a32_lr1e5_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_seed41_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_seed41_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_seed42_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_seed42_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "lora_1p5b_seed43_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/lora_1p5b_seed43_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "wavelet_lora_1p5b_paper_seed41_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/wavelet_lora_1p5b_paper_seed41_r16_a32_lr1e5_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "wavelet_lora_1p5b_paper_seed42_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/wavelet_lora_1p5b_paper_seed42_r16_a32_lr1e5_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "wavelet_lora_1p5b_paper_seed42_r16_a32_lr1e5_s500_continue_modelonly_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/wavelet_lora_1p5b_paper_seed42_r16_a32_lr1e5_s500_continue_modelonly_s500",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "LoRA-Baseline-Paper-Replication",
+    "run": "wavelet_lora_1p5b_paper_seed43_r16_a32_lr1e5_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/LoRA-Baseline-Paper-Replication/wavelet_lora_1p5b_paper_seed43_r16_a32_lr1e5_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_fixpost_step300_seed40",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_fixpost_step300_seed40",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_fixpost_step300_seed42",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_fixpost_step300_seed42",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_fixpost_step300_seed42_r16_a16",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_fixpost_step300_seed42_r16_a16",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed40_a32_lr2e5_8gpu_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed40_a32_lr2e5_8gpu_r1",
+    "num_steps": 21,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_850",
+      "global_step_900",
+      "global_step_950",
+      "global_step_1000",
+      "global_step_1024"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed40_basekl_s300",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed40_basekl_s300",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed40_basekl_s300_8gpu",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed40_basekl_s300_8gpu",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_a32_lr1e6_const_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_a32_lr1e6_const_r1",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_a32_lr2e5_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_a32_lr2e5_r1",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_a32_lr2e5_r2",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_a32_lr2e5_r2",
+    "num_steps": 21,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_850",
+      "global_step_900",
+      "global_step_950",
+      "global_step_1000",
+      "global_step_1024"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_eval_kl_fix",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_eval_kl_fix",
+    "num_steps": 6,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_100",
+      "global_step_150",
+      "global_step_200",
+      "global_step_250",
+      "global_step_300"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_meta_fix_rerun",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_meta_fix_rerun",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_offload_fix_rerun",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_offload_fix_rerun",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_r16_a16_lr_schedule",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_r16_a16_lr_schedule",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed42_step0_probe",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed42_step0_probe",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed43_a32_lr2e5_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed43_a32_lr2e5_r1",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed43_a32_lr2e5_r2",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed43_a32_lr2e5_r2",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "PiSSA-Paper-Replication",
+    "run": "pissa_1p5b_paper_seed46_a32_lr2e5_8gpu_r1",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/PiSSA-Paper-Replication/pissa_1p5b_paper_seed46_a32_lr2e5_8gpu_r1",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_fast_seed44_r7",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_fast_seed44_r7",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_fast_seed45_r7",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_fast_seed45_r7",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_nooffload_seed44_r8",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_nooffload_seed44_r8",
+    "num_steps": 11,
+    "first_steps": [
+      "global_step_100",
+      "global_step_200",
+      "global_step_300"
+    ],
+    "last_steps": [
+      "global_step_700",
+      "global_step_800",
+      "global_step_900",
+      "global_step_1000",
+      "global_step_1024"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_nooffload_seed45_r8",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_nooffload_seed45_r8",
+    "num_steps": 11,
+    "first_steps": [
+      "global_step_100",
+      "global_step_200",
+      "global_step_300"
+    ],
+    "last_steps": [
+      "global_step_700",
+      "global_step_800",
+      "global_step_900",
+      "global_step_1000",
+      "global_step_1024"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed40_basekl_s300",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed40_basekl_s300",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed40_basekl_s300_8gpu",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed40_basekl_s300_8gpu",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed40_basekl_s300_8gpu_verify",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed40_basekl_s300_8gpu_verify",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed40_basekl_s300_8gpu_verify2",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed40_basekl_s300_8gpu_verify2",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed40_basekl_s300_8gpu_verify3",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed40_basekl_s300_8gpu_verify3",
+    "num_steps": 6,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_100",
+      "global_step_150",
+      "global_step_200",
+      "global_step_250",
+      "global_step_300"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed41_r16_a16_algfix_constlr_rerun",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed41_r16_a16_algfix_constlr_rerun",
+    "num_steps": 6,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_100",
+      "global_step_150",
+      "global_step_200",
+      "global_step_250",
+      "global_step_300"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_a32_lr2e5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_a32_lr2e5",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_a32_lr2e5_r2",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_a32_lr2e5_r2",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_a32_lr2e5_r3",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_a32_lr2e5_r3",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_a32_lr2e5_r5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_a32_lr2e5_r5",
+    "num_steps": 18,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_700",
+      "global_step_750",
+      "global_step_800",
+      "global_step_850",
+      "global_step_900"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_algfix_constlr",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_algfix_constlr",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_r16_a16_algfix_constlr",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_r16_a16_algfix_constlr",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed42_r16_a16_algfix_constlr_rerun",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed42_r16_a16_algfix_constlr_rerun",
+    "num_steps": 18,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_700",
+      "global_step_750",
+      "global_step_800",
+      "global_step_850",
+      "global_step_900"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed43",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed43",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed43_a32_lr2e5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed43_a32_lr2e5",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed43_a32_lr2e5_r2",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed43_a32_lr2e5_r2",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed43_a32_lr2e5_r3",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed43_a32_lr2e5_r3",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed43_a32_lr2e5_r5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed43_a32_lr2e5_r5",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed44_a32_lr2e5_r5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed44_a32_lr2e5_r5",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed44_a32_lr2e5_r6",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed44_a32_lr2e5_r6",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed44_debug",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed44_debug",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed45_a32_lr2e5_r5",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed45_a32_lr2e5_r5",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "MiLoRA-Paper-Replication",
+    "run": "milora_1p5b_paper_seed45_a32_lr2e5_r6",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/MiLoRA-Paper-Replication/milora_1p5b_paper_seed45_a32_lr2e5_r6",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "RLPO-Paper-Replication",
+    "run": "rlpo_1p5b_paper_seed41",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLPO-Paper-Replication/rlpo_1p5b_paper_seed41",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "RLPO-Paper-Replication",
+    "run": "rlpo_1p5b_paper_seed42",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLPO-Paper-Replication/rlpo_1p5b_paper_seed42",
+    "num_steps": 13,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_450",
+      "global_step_500",
+      "global_step_550",
+      "global_step_600",
+      "global_step_650"
+    ]
+  },
+  {
+    "project": "RLPO-Paper-Replication",
+    "run": "rlpo_1p5b_paper_seed42_rlpo_best",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLPO-Paper-Replication/rlpo_1p5b_paper_seed42_rlpo_best",
+    "num_steps": 0,
+    "first_steps": [],
+    "last_steps": []
+  },
+  {
+    "project": "RLPO-Paper-Replication",
+    "run": "rlpo_1p5b_paper_seed43",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLPO-Paper-Replication/rlpo_1p5b_paper_seed43",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_paper_seed41",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_paper_seed41",
+    "num_steps": 13,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_450",
+      "global_step_500",
+      "global_step_550",
+      "global_step_600",
+      "global_step_650"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_paper_seed42",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_paper_seed42",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_paper_seed43",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_paper_seed43",
+    "num_steps": 14,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_500",
+      "global_step_550",
+      "global_step_600",
+      "global_step_650",
+      "global_step_700"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_seed41_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_seed41_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_seed42_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_seed42_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  },
+  {
+    "project": "RLMO-Paper-Replication",
+    "run": "rlmo_1p5b_seed43_cosine_lr1e5_8gpu_s500",
+    "path": "HF_OR_LOCAL_CHECKPOINT_ROOT/RLMO-Paper-Replication/rlmo_1p5b_seed43_cosine_lr1e5_8gpu_s500",
+    "num_steps": 10,
+    "first_steps": [
+      "global_step_50",
+      "global_step_100",
+      "global_step_150"
+    ],
+    "last_steps": [
+      "global_step_300",
+      "global_step_350",
+      "global_step_400",
+      "global_step_450",
+      "global_step_500"
+    ]
+  }
+]
