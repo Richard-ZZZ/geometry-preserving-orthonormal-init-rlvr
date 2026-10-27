@@ -26,43 +26,43 @@ Machine-readable summaries are available in [`llms.txt`](llms.txt), [`codemeta.j
 
 ## The Method at a Glance
 
-For a pretrained matrix \(W_0\in\mathbb{R}^{m\times n}\), LoRA writes
+For a pretrained matrix $W_0\in\mathbb{R}^{m\times n}$, LoRA writes
 
-$$
+```math
 W = W_0 + sBA, \qquad
 B\in\mathbb{R}^{m\times r},\quad
 A\in\mathbb{R}^{r\times n},
-$$
+```
 
-where \(s=\alpha/r\) is the usual PEFT scaling. Let
+where $s=\alpha/r$ is the usual PEFT scaling. Let
 
-$$
+```math
 W_0 = U\Sigma V^\top, \qquad
 \sigma_1\geq\cdots\geq\sigma_k>0.
-$$
+```
 
 **LoRA-RLPO and LoRA-RLMO initialize**
 
-$$
+```math
 \boxed{B_0=0,\qquad A_0=V_{\mathcal S}^{\top},\qquad A_0A_0^\top=I_r.}
-$$
+```
 
-The selected index set \(\mathcal S\) defines the variant:
+The selected index set $\mathcal S$ defines the variant:
 
 | Variant | Spectral subspace | Initialization |
 |---|---|---|
-| **LoRA-RLPO** | principal, \(\mathcal S=\{1,\ldots,r\}\) | \(B_0=0,\ A_0=V_r^\top\) |
-| **LoRA-RLMO** | minor, \(\mathcal S=\{k-r+1,\ldots,k\}\) | \(B_0=0,\ A_0=V_{-r}^\top\) |
+| **LoRA-RLPO** | principal, $\mathcal S=\{1,\ldots,r\}$ | $B_0=0,\ A_0=V_r^\top$ |
+| **LoRA-RLMO** | minor, $\mathcal S=\{k-r+1,\ldots,k\}$ | $B_0=0,\ A_0=V_{-r}^\top$ |
 
 This form gives three immediate properties:
 
-1. **Exact function preservation:** \(sB_0A_0=0\), so the initialized policy is exactly the pretrained policy. No residual-base rewrite is needed.
-2. **Orthonormal rows:** \(A_0A_0^\top=I_r\), which minimizes the initialization-dependent term in our bound on the gap between LoRA and full fine-tuning.
-3. **Geometry without spectral amplification:** the singular vectors preserve a pretrained spectral subspace, while omitting \(\Sigma^{1/2}\) avoids singular-value-scaled updates.
+1. **Exact function preservation:** $sB_0A_0=0$, so the initialized policy is exactly the pretrained policy. No residual-base rewrite is needed.
+2. **Orthonormal rows:** $A_0A_0^\top=I_r$, which minimizes the initialization-dependent term in our bound on the gap between LoRA and full fine-tuning.
+3. **Geometry without spectral amplification:** the singular vectors preserve a pretrained spectral subspace, while omitting $\Sigma^{1/2}$ avoids singular-value-scaled updates.
 
-Under the paper's unscaled parameterization (\(s=1\)), the first LoRA weight update is a projection of the full update onto the selected right-singular subspace:
+Under the paper's unscaled parameterization ($s=1$), the first LoRA weight update is a projection of the full update onto the selected right-singular subspace:
 
-$$
+```math
 \Delta W^{\mathrm{LoRA}}_1
 =
 \Delta W^{\mathrm{full}}_1 A_0^\top A_0,
@@ -70,21 +70,21 @@ $$
 \lVert\Delta W^{\mathrm{LoRA}}_1\rVert_F
 \leq
 \lVert\Delta W^{\mathrm{full}}_1\rVert_F.
-$$
+```
 
 See [`docs/method.md`](docs/method.md) for the exact method specification, PEFT mapping, and implementation invariants.
 
 ## How the Proposed Methods Differ from Other Initializations
 
-| Method | \(B_0\) | \(A_0\) | Initial update \(B_0A_0\) | Uses pretrained geometry | Singular-value scaling |
+| Method | $B_0$ | $A_0$ | Initial update $B_0A_0$ | Uses pretrained geometry | Singular-value scaling |
 |---|---|---|---:|---:|---:|
-| LoRA | \(0\) | random Gaussian | \(0\) | No | No |
-| PiSSA | \(U_r\Sigma_r^{1/2}\) | \(\Sigma_r^{1/2}V_r^\top\) | nonzero* | Principal | Yes |
-| MiLoRA | \(U_{-r}\Sigma_{-r}^{1/2}\) | \(\Sigma_{-r}^{1/2}V_{-r}^\top\) | nonzero* | Minor | Yes |
-| **LoRA-RLPO (ours)** | **\(0\)** | **\(V_r^\top\)** | **\(0\)** | **Principal** | **No** |
-| **LoRA-RLMO (ours)** | **\(0\)** | **\(V_{-r}^\top\)** | **\(0\)** | **Minor** | **No** |
+| LoRA | $0$ | random Gaussian | $0$ | No | No |
+| PiSSA | $U_r\Sigma_r^{1/2}$ | $\Sigma_r^{1/2}V_r^\top$ | nonzero* | Principal | Yes |
+| MiLoRA | $U_{-r}\Sigma_{-r}^{1/2}$ | $\Sigma_{-r}^{1/2}V_{-r}^\top$ | nonzero* | Minor | Yes |
+| **LoRA-RLPO (ours)** | **$0$** | **$V_r^\top$** | **$0$** | **Principal** | **No** |
+| **LoRA-RLMO (ours)** | **$0$** | **$V_{-r}^\top$** | **$0$** | **Minor** | **No** |
 
-\* PiSSA and MiLoRA preserve the original function by subtracting \(B_0A_0\) from the frozen base weight. LoRA-RLPO and LoRA-RLMO do not modify the base model.
+\* PiSSA and MiLoRA preserve the original function by subtracting $B_0A_0$ from the frozen base weight. LoRA-RLPO and LoRA-RLMO do not modify the base model.
 
 ## Main Result
 

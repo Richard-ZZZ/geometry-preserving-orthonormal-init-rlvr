@@ -2,11 +2,11 @@
 
 LoRA-RLPO and LoRA-RLMO are the two methods proposed in the paper. For a pretrained matrix $W_0=U\Sigma V^\top$, they use
 
-$$
+```math
 \text{LoRA-RLPO}:\quad B_0=0,\ A_0=V_r^\top,
 \qquad
 \text{LoRA-RLMO}:\quad B_0=0,\ A_0=V_{-r}^\top.
-$$
+```
 
 Thus $A_0A_0^\top=I_r$ and $B_0A_0=0$. Both methods preserve the pretrained function without modifying the base model and do not apply singular-value scaling. See [`../docs/method.md`](../docs/method.md) for the exact method specification.
 
