@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-# RLMO for verl DAPO experiments.
-# Initialization: A = orthonormal minor SVD directions (Vh[-r:]), B = 0.
+# LoRA-RLMO, our minor orthonormal initialization, for verl DAPO experiments.
+# Initialization: A_0 = V_{-r}^T = Vh[-r:] and B_0 = 0 (no singular-value scaling).
 # delta = 0, so the base model is NOT modified; use the original pretrained model.
 #
 # Required env vars for multi-job launch:

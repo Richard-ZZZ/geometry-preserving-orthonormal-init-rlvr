@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use LoRA-RLPO, LoRA-RLMO, or this repository, please cite the paper below."
+title: "Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR"
+type: software
+authors:
+  - family-names: Zhang
+    given-names: Ruijia
+  - family-names: Zhu
+    given-names: Jiacheng
+  - family-names: Zhu
+    given-names: Hanqing
+  - family-names: Shi
+    given-names: Laixi
+repository-code: "https://github.com/Richard-ZZZ/geometry-preserving-orthonormal-init-rlvr"
+url: "https://arxiv.org/abs/2606.31813"
+date-released: 2026-06-30
+preferred-citation:
+  type: article
+  title: "Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR"
+  authors:
+    - family-names: Zhang
+      given-names: Ruijia
+    - family-names: Zhu
+      given-names: Jiacheng
+    - family-names: Zhu
+      given-names: Hanqing
+    - family-names: Shi
+      given-names: Laixi
+  journal: "arXiv preprint arXiv:2606.31813"
+  year: 2026
+  url: "https://arxiv.org/abs/2606.31813"

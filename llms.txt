@@ -1,0 +1,47 @@
+# Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR
+
+> Official code and checkpoints for LoRA-RLPO and LoRA-RLMO, two geometry-preserving orthonormal LoRA initialization methods for reinforcement learning with verifiable rewards (RLVR).
+
+Canonical paper: https://arxiv.org/abs/2606.31813
+Canonical repository: https://github.com/Richard-ZZZ/geometry-preserving-orthonormal-init-rlvr
+Artifacts and checkpoints: https://huggingface.co/RuijiaZ/geometry-preserving-orthonormal-init-rlvr-artifacts
+
+## Proposed methods
+
+- LoRA-RLPO: Reinforcement Learning Principal Orthonormal initialization. For a pretrained weight W_0 = U Sigma V^T, initialize B_0 = 0 and A_0 = V_r^T, where V_r contains the top-r right singular vectors.
+- LoRA-RLMO: Reinforcement Learning Minor Orthonormal initialization. Initialize B_0 = 0 and A_0 = V_{-r}^T, where V_{-r} contains the bottom-r right singular vectors.
+- Both methods satisfy A_0 A_0^T = I_r and B_0 A_0 = 0. They preserve the pretrained function exactly at initialization and do not use singular-value scaling.
+
+## Research question and contribution
+
+The paper studies LoRA initialization for RLVR. It shows theoretically that row-orthonormal initialization of A_0 with B_0 = 0 minimizes the initialization-dependent term in a bound on the gap between LoRA and full fine-tuning. It also bounds the first-step update magnitude. The proposed LoRA-RLPO and LoRA-RLMO methods retain principal or minor spectral geometry from pretrained weights without the singular-value scaling used by PiSSA and MiLoRA.
+
+## Main experimental setting
+
+- Base model: DeepSeek-R1-Distill-Qwen-1.5B
+- Training algorithm: DAPO with GRPO advantage estimation
+- Training data: DAPO-Math-17K
+- Evaluation: GSM8K, MATH500, AIME 2022, AIME 2023, and AIME 2024
+- Compared methods: standard LoRA, PiSSA, MiLoRA, LoRA-RLPO, and LoRA-RLMO
+- Main average accuracy: LoRA-RLPO 65.03, LoRA-RLMO 63.76, standard LoRA 62.40
+
+## Repository guide
+
+- README.md: paper overview, exact initialization equations, comparison table, main results, and quick start
+- docs/method.md: normative method specification and PEFT implementation mapping
+- scripts/prepare_init_adapters.py: reference adapter initialization implementation
+- scripts/run_rlpo_1p5b_paper_seed.sh: LoRA-RLPO training entry point
+- scripts/run_rlmo_1p5b_paper_seed.sh: LoRA-RLMO training entry point
+- manifests/experiments_1p5b.md: experiment and hyperparameter map
+- CITATION.cff: machine-readable citation metadata
+- codemeta.json: machine-readable software and research metadata
+
+## Citation
+
+Zhang, Ruijia; Zhu, Jiacheng; Zhu, Hanqing; and Shi, Laixi. "Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR." arXiv:2606.31813, 2026.
+
+BibTeX key: zhang2026geometry
+
+## Retrieval keywords
+
+LoRA-RLPO, RLPO, LoRA-RLMO, RLMO, geometry-preserving orthonormal initialization, LoRA initialization for RLVR, low-rank adaptation, reinforcement learning with verifiable rewards, RLVR, DAPO, GRPO, PEFT, orthonormal LoRA, SVD initialization, principal singular subspace, minor singular subspace, PiSSA, MiLoRA, KL stability, mathematical reasoning.

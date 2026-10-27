@@ -1,6 +1,16 @@
 # Adapter Bundles
 
-The reproduction scripts expect initialization adapters for PiSSA, MiLoRA, RLPO, and RLMO.
+LoRA-RLPO and LoRA-RLMO are the two methods proposed in the paper. For a pretrained matrix $W_0=U\Sigma V^\top$, they use
+
+$$
+\text{LoRA-RLPO}:\quad B_0=0,\ A_0=V_r^\top,
+\qquad
+\text{LoRA-RLMO}:\quad B_0=0,\ A_0=V_{-r}^\top.
+$$
+
+Thus $A_0A_0^\top=I_r$ and $B_0A_0=0$. Both methods preserve the pretrained function without modifying the base model and do not apply singular-value scaling. See [`../docs/method.md`](../docs/method.md) for the exact method specification.
+
+The reproduction scripts expect initialization adapters for PiSSA, MiLoRA, LoRA-RLPO, and LoRA-RLMO.
 
 You do not need to upload prebuilt adapters if this repository includes the deterministic generation script and documents the exact base model, rank, alpha, dropout, target modules, and PEFT initialization settings. Uploading adapters is still useful for convenience and for byte-level artifact preservation.
 
@@ -44,12 +54,12 @@ python scripts/prepare_init_adapters.py \
   --methods pissa milora \
   --rank 32 \
   --lora-alpha 32 \
-  --lora-dropout 0.05 \
+  --lora-dropout 0.0 \
   --dtype bfloat16 \
   --device cuda
 ```
 
-Generate RLPO and RLMO adapters at rank 16:
+Generate the LoRA-RLPO and LoRA-RLMO adapters at rank 16:
 
 ```bash
 python scripts/prepare_init_adapters.py \
@@ -58,7 +68,8 @@ python scripts/prepare_init_adapters.py \
   --methods rlpo rlmo \
   --rank 16 \
   --lora-alpha 32 \
-  --lora-dropout 0.05 \
+  --lora-dropout 0.0 \
+  --target-modules all-linear \
   --dtype bfloat16 \
   --device cuda
 ```
@@ -72,8 +83,8 @@ For multi-GPU or CPU-only initialization, use `--device-map auto` or `--device c
 | LoRA | No initialization adapter required by default. | Original pretrained model. |
 | PiSSA | `pissa_r32_a32/adapter` | `pissa_r32_a32/base` |
 | MiLoRA | `milora_r32_a32/adapter` | `milora_r32_a32/base` |
-| RLPO | `rlpo_r16_a32/adapter` | Original pretrained model. |
-| RLMO | `rlmo_r16_a32/adapter` | Original pretrained model. |
+| LoRA-RLPO | `rlpo_r16_a32/adapter` | Original pretrained model. |
+| LoRA-RLMO | `rlmo_r16_a32/adapter` | Original pretrained model. |
 
 ## Download Prebuilt Bundles
 

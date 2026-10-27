@@ -5,8 +5,10 @@ Prepare initialization adapter bundles for DAPO 1.5B reproduction.
 The public training scripts use four generated adapter families:
 
 - PiSSA and MiLoRA save both a compensated base model and an adapter.
-- RLPO and RLMO save only an adapter; the base model remains the original
-  pretrained model.
+- LoRA-RLPO and LoRA-RLMO are the two proposed methods. They initialize A with
+  principal or minor right singular vectors and B with zero, respectively.
+  Both save only an adapter; the base model remains the original pretrained
+  model because the initial low-rank update is exactly zero.
 
 Example:
   python scripts/prepare_init_adapters.py \
@@ -28,21 +30,13 @@ import torch
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-DEFAULT_TARGET_MODULES = [
-    "q_proj",
-    "v_proj",
-    "k_proj",
-    "o_proj",
-    "up_proj",
-    "down_proj",
-    "gate_proj",
-]
-
 PUBLIC_METHODS = ("pissa", "milora", "rlpo", "rlmo")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare DAPO 1.5B initialization adapter bundles.")
+    parser = argparse.ArgumentParser(
+        description="Prepare DAPO 1.5B initialization adapters, including LoRA-RLPO and LoRA-RLMO."
+    )
     parser.add_argument(
         "--model-name-or-path",
         required=True,
@@ -56,14 +50,14 @@ def parse_args() -> argparse.Namespace:
         help="Methods to prepare. Use separate runs when methods use different ranks.",
     )
     parser.add_argument("--output-dir", required=True, help="Output root for generated bundles.")
-    parser.add_argument("--rank", type=int, default=32, help="LoRA rank.")
+    parser.add_argument("--rank", type=int, default=16, help="LoRA rank (main paper setting: 16).")
     parser.add_argument("--lora-alpha", type=int, default=32, help="LoRA alpha.")
-    parser.add_argument("--lora-dropout", type=float, default=0.05, help="LoRA dropout.")
+    parser.add_argument("--lora-dropout", type=float, default=0.0, help="LoRA dropout (paper setting: 0.0).")
     parser.add_argument(
         "--target-modules",
         type=str,
-        default=",".join(DEFAULT_TARGET_MODULES),
-        help="Comma-separated modules, JSON list, or all-linear.",
+        default="all-linear",
+        help="Comma-separated modules, JSON list, or all-linear (paper setting and default).",
     )
     parser.add_argument(
         "--pissa-init",
@@ -162,6 +156,7 @@ def initialize_milora_layer(weights: torch.Tensor, rank: int, mode: str):
 
 
 def initialize_orthogonal_zero_b_layer(weights: torch.Tensor, rank: int, mode: str):
+    """Initialize one proposed layer: A is a selected row-orthonormal Vh block and B is zero."""
     _, _, vh_sel = select_svd_components(weights, rank=rank, mode=mode)
     lora_a = vh_sel.contiguous()
     lora_b = torch.zeros(weights.shape[0], rank, device=weights.device, dtype=weights.dtype)
@@ -325,8 +320,12 @@ def save_bundle(
 
 def notes_for_method(method: str) -> list[str]:
     if method in ("rlpo", "rlmo"):
+        public_name = "LoRA-RLPO" if method == "rlpo" else "LoRA-RLMO"
+        subspace = "principal (top-r)" if method == "rlpo" else "minor (bottom-r)"
         return [
-            f"{method.upper()}: orthonormal SVD directions with zero B; delta=0.",
+            f"{public_name}: {subspace} right singular vectors in A; B=0.",
+            "A has orthonormal rows; no singular-value scaling is applied.",
+            "The initial low-rank update is exactly zero: delta=0.",
             "Use the original pretrained model as actor_rollout_ref.model.path.",
             "Use this bundle adapter as actor_rollout_ref.model.lora_adapter_path.",
             "Do not enable lora_residual_base for this method.",

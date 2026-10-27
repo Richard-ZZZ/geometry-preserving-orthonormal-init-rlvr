@@ -59,7 +59,7 @@ Download the public parquet files:
 bash scripts/prepare_data.sh
 ```
 
-Generate initialization bundles from the base model. The two commands use different ranks because the released launch scripts use rank 32 for PiSSA/MiLoRA and rank 16 for RLPO/RLMO:
+Generate initialization bundles from the base model. The two commands use different ranks because the released launch scripts use rank 32 for PiSSA/MiLoRA and rank 16 for LoRA-RLPO/RLMO:
 
 ```bash
 export MODEL_BASE_PATH=deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
@@ -71,7 +71,7 @@ python scripts/prepare_init_adapters.py \
   --methods pissa milora \
   --rank 32 \
   --lora-alpha 32 \
-  --lora-dropout 0.05 \
+  --lora-dropout 0.0 \
   --dtype bfloat16 \
   --device cuda
 
@@ -81,7 +81,8 @@ python scripts/prepare_init_adapters.py \
   --methods rlpo rlmo \
   --rank 16 \
   --lora-alpha 32 \
-  --lora-dropout 0.05 \
+  --lora-dropout 0.0 \
+  --target-modules all-linear \
   --dtype bfloat16 \
   --device cuda
 ```

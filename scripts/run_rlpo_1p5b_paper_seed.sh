@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-# RLPO for verl DAPO experiments.
-# Initialization: A = orthonormal principal SVD directions (Vh[:r]), B = 0.
+# LoRA-RLPO, our principal orthonormal initialization, for verl DAPO experiments.
+# Initialization: A_0 = V_r^T = Vh[:r] and B_0 = 0 (no singular-value scaling).
 # delta = 0, so the base model is NOT modified; use the original pretrained model.
 #
 # Required env vars for multi-job launch:

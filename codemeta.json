@@ -1,0 +1,74 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "LoRA-RLPO and LoRA-RLMO for Reinforcement Learning with Verifiable Rewards",
+  "alternateName": "Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR",
+  "description": "Official implementation of LoRA-RLPO and LoRA-RLMO, two geometry-preserving orthonormal LoRA initialization methods for stable reinforcement learning with verifiable rewards (RLVR).",
+  "codeRepository": "https://github.com/Richard-ZZZ/geometry-preserving-orthonormal-init-rlvr",
+  "issueTracker": "https://github.com/Richard-ZZZ/geometry-preserving-orthonormal-init-rlvr/issues",
+  "relatedLink": [
+    "https://arxiv.org/abs/2606.31813",
+    "https://huggingface.co/RuijiaZ/geometry-preserving-orthonormal-init-rlvr-artifacts"
+  ],
+  "identifier": "arXiv:2606.31813",
+  "datePublished": "2026-06-30",
+  "programmingLanguage": [
+    "Python",
+    "Bash"
+  ],
+  "runtimePlatform": [
+    "PyTorch",
+    "verl",
+    "vLLM"
+  ],
+  "applicationCategory": "Machine learning research software",
+  "keywords": [
+    "LoRA-RLPO",
+    "RLPO",
+    "LoRA-RLMO",
+    "RLMO",
+    "geometry-preserving orthonormal initialization",
+    "LoRA initialization",
+    "low-rank adaptation",
+    "reinforcement learning with verifiable rewards",
+    "RLVR",
+    "DAPO",
+    "GRPO",
+    "parameter-efficient fine-tuning",
+    "PEFT",
+    "orthonormal initialization",
+    "singular value decomposition",
+    "PiSSA",
+    "MiLoRA",
+    "mathematical reasoning"
+  ],
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Ruijia",
+      "familyName": "Zhang"
+    },
+    {
+      "@type": "Person",
+      "givenName": "Jiacheng",
+      "familyName": "Zhu"
+    },
+    {
+      "@type": "Person",
+      "givenName": "Hanqing",
+      "familyName": "Zhu"
+    },
+    {
+      "@type": "Person",
+      "givenName": "Laixi",
+      "familyName": "Shi"
+    }
+  ],
+  "citation": {
+    "@type": "ScholarlyArticle",
+    "headline": "Geometry-Preserving Orthonormal Initialization for Low-Rank Adaptation in RLVR",
+    "identifier": "arXiv:2606.31813",
+    "url": "https://arxiv.org/abs/2606.31813",
+    "datePublished": "2026-06-30"
+  }
+}
